@@ -182,9 +182,8 @@ streamlit run app.py
 
 ## Contributors
 
-- Your Name: Brijesh Gowda C
-- Team Members: Akash, Shubham & Likith
-
+- Your Name: Likith G
+- Team Members: Akash, Shubham & Brijesh
 ---
 
 ## License
