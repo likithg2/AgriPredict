@@ -19,6 +19,7 @@ The system combines Machine Learning, Deep Learning, weather data, route optimiz
 - 🔊 AI-generated Voice Advisory
 - 🌐 Multi-language Support (English & Kannada)
 - 📊 Interactive Dashboard using Streamlit
+- 🔌 Backend API powered by FastAPI
 
 ---
 
@@ -26,16 +27,15 @@ The system combines Machine Learning, Deep Learning, weather data, route optimiz
 
 ### Frontend
 - Streamlit
-- HTML
-- CSS
+- HTML / CSS
 
 ### Backend
 - Python
+- FastAPI
+- SQLite (`postharvest.db`)
 
 ### Machine Learning
-- TensorFlow
-- Keras
-- MobileNetV2
+- TensorFlow / Keras (MobileNetV2)
 - Scikit-Learn
 
 ### Data Processing
@@ -56,31 +56,37 @@ The system combines Machine Learning, Deep Learning, weather data, route optimiz
 
 ## 📂 Project Structure
 
-```
-Smart_Agricultural_Supply_Chain/
+```text
+PostHarvestLossPrediction/
+│
+├── backend/
+│   ├── main.py                 # FastAPI Application Entry
+│   ├── database.py             # Database Configuration
+│   ├── models.py               # SQLAlchemy Database Models
+│   ├── schemas.py              # Pydantic Schemas
+│   ├── routers/                # API Endpoints (Auth, Farmers, Predictions, etc.)
+│   └── requirements.txt        # Backend dependencies
 │
 ├── models/
-│   ├── vegetable_quality_model.keras
-│   └── spoilage_prediction_model.pkl
-│
-├── utils/
-│   ├── quality_predictor.py
-│   ├── weather.py
-│   ├── prediction.py
-│   └── routing.py
+│   └── vegetable_quality_model.keras # Deep Learning Model
 │
 ├── pages/
-│   ├── Home.py
-│   ├── ML_Prediction.py
-│   └── Dashboard.py
+│   ├── 0_🔐_Login.py
+│   ├── 1_📊_ML_Prediction.py
+│   ├── 2_🗄️_Warehouse_Manager.py
+│   ├── 3_🧑‍🌾_Dashboard.py
+│   └── 4_📜_Prediction_History.py
 │
-├── assets/
+├── utils/
+│   ├── api_client.py           # Backend Integration Utility
+│   ├── quality_predictor.py    # Image Inference Utility
+│   ├── translator.py           # Multi-language Support
+│   └── ui.py                   # Streamlit UI Components
 │
-├── data/
-│
-├── requirements.txt
-│
-└── app.py
+├── *.csv                       # Datasets (Cold Storage, Buyers, Active Shipments)
+├── artifacts_v2.pkl            # Spoilage Prediction ML Pipeline
+├── requirements.txt            # Frontend Streamlit Dependencies
+└── Home.py                     # Streamlit App Entry Point
 ```
 
 ---
@@ -97,8 +103,7 @@ Smart_Agricultural_Supply_Chain/
 
 ### 2. Crop Spoilage Prediction
 
-Predicts
-
+Predicts:
 - Spoilage Probability
 - Remaining Shelf Life
 - Financial Loss
@@ -111,67 +116,54 @@ Predicts
 The quality analysis model was trained using a custom dataset containing approximately **27,000+ images** across **20 classes**, including fresh and rotten vegetables.
 
 Classes include:
-
-- Apple
-- Banana
-- Bitter Gourd
-- Capsicum
-- Cucumber
-- Okra
-- Onion
-- Orange
-- Potato
-- Tomato
+- Apple, Banana, Bitter Gourd, Capsicum, Cucumber, Okra, Onion, Orange, Potato, Tomato.
 
 Each vegetable contains Fresh and Rotten categories.
 
 ---
 
-## 🖥️ Installation
+## 🖥️ Installation & Setup
 
-Clone the repository
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/likithg2/PostHarvestLossPrediction.git
+   cd PostHarvestLossPrediction
+   ```
 
-```bash
-git clone <repository-link>
-```
+2. **Create and Activate a Virtual Environment**
+   *Windows:*
+   ```bash
+   python -m venv venv
+   venv\Scripts\activate
+   ```
+   *Mac/Linux:*
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
 
-Navigate to project
+3. **Install Dependencies**
+   ```bash
+   pip install -r requirements.txt
+   pip install -r backend/requirements.txt
+   ```
 
-```bash
-cd Smart_Agricultural_Supply_Chain
-```
+4. **Run the Backend API (FastAPI)**
+   In a new terminal (with the virtual environment activated):
+   ```bash
+   cd backend
+   uvicorn main:app --reload
+   ```
 
-Create Virtual Environment
-
-```bash
-python -m venv venv
-```
-
-Activate
-
-Windows
-
-```bash
-venv\Scripts\activate
-```
-
-Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-Run
-
-```bash
-streamlit run app.py
-```
+5. **Run the Frontend (Streamlit)**
+   In another terminal (with the virtual environment activated):
+   ```bash
+   streamlit run Home.py
+   ```
 
 ---
 
-
-
-## Future Improvements
+## 🚀 Future Improvements
 
 - Real-time IoT Sensor Integration
 - Edge Device Deployment
@@ -180,12 +172,13 @@ streamlit run app.py
 
 ---
 
-## Contributors
+## 👥 Contributors
 
-- Your Name: Likith G
+- **Likith G**
 - Team Members: Akash, Shubham & Brijesh
+
 ---
 
-## License
+## 📜 License
 
 This project is developed for academic purposes.
