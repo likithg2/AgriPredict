@@ -370,7 +370,11 @@ def calculate_optimized_warehouse_matrix(f_lat, f_lng, crop, qty_tons, road_cond
         lambda row: haversine(f_lat, f_lng, row['latitude'], row['longitude']), axis=1
     )
 
-    df_candidates = df_cs[df_cs.get('occupancy_pct', 65.0) < 95.0].copy()
+    df_cs['available_capacity_tons'] = df_cs.get('capacity_mt', 5000) * (1 - df_cs.get('occupancy_pct', 65.0) / 100.0)
+    df_candidates = df_cs[
+        (df_cs.get('occupancy_pct', 65.0) < 95.0) & 
+        (df_cs['available_capacity_tons'] >= qty_tons)
+    ].copy()
     df_candidates = df_candidates.sort_values(by='base_dist', ascending=True).head(3)
 
     fallback_map = {
@@ -406,6 +410,8 @@ def calculate_optimized_warehouse_matrix(f_lat, f_lng, crop, qty_tons, road_cond
             'latitude':               row['latitude'],
             'longitude':              row['longitude'],
             'base_dist':              base_dist,
+            'capacity_mt':            row.get('capacity_mt', 5000),
+            'available_capacity':     row.get('available_capacity_tons', 100.0),
             'occupancy_pct':          row.get('occupancy_pct', 65.0),
             'mandi_price_per_kg':     mandi_p_kg,
             'price_source':           price_source,
@@ -636,18 +642,17 @@ with col_in:
     district = st.selectbox(txt["dist_lbl"], DISTRICT_LIST, index=dist_idx, key="viva_district")
     st.markdown(f"**{txt['road_lbl']}**")
     road_condition = st.selectbox("Infrastructure Drop", ["National Highway", "State Highway", "Rural / Unpaved Road"], label_visibility="collapsed")
-    c_date = st.date_input(txt["harvest_lbl"], date.today() - timedelta(days=4), max_value=date.today())
+    c_date = st.date_input(txt["harvest_lbl"], date.today(), max_value=date.today())
     storage_days  = (date.today() - c_date).days
 
     c1, c2 = st.columns(2)
     with c1: temp = st.number_input(txt["temp_lbl"], value=fetched_temp)
     with c2: hum  = st.number_input(txt["hum_lbl"],  value=fetched_hum)
-    st.markdown(f"**{txt['transit_lbl']}**")
-    c3, c4 = st.columns(2)
-    with c3: actual_t = st.number_input(txt["transit_actual"], value=3.0)
-    with c4: expect_t = st.number_input(txt["transit_expect"], value=1.5)
-    arrival_v   = st.number_input(txt["vol_current"], value=180.0)
-    avg_v       = st.number_input(txt["vol_avg"],     value=90.0)
+    # Simulated backend fetch for Logistics & Market data
+    actual_t = 3.0
+    expect_t = 1.5
+    arrival_v = 180.0
+    avg_v = 90.0
     qty_tons    = st.number_input(txt["qty_lbl"], min_value=0.1, value=qty_val)
     predict_btn = st.button(txt["btn_analyze"], type="primary", use_container_width=True)
 
@@ -667,143 +672,160 @@ if predict_btn:
         st.error(txt["error_cs"])
         st.stop()
 
-    target_cs       = top_options.iloc[0]
-    base_geodist    = target_cs['base_dist']
-    dist_km         = base_geodist
-    polyline_coords = []
-    routing_source  = "straight-line (fallback)"
-    route_debug_log = []   # collects routing diagnostic messages shown in expander
-
-    # ── STEP 1: Google Maps Routes API (computeRoutes) ───────────────────────
-    try:
-        g_url = "https://routes.googleapis.com/directions/v2:computeRoutes"
-        headers = {
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": GOOGLE_API_KEY,
-            "X-Goog-FieldMask": "routes.distanceMeters,routes.polyline.encodedPolyline"
-        }
-        payload = {
-            "origin": {"location": {"latLng": {"latitude": f_lat, "longitude": f_lng}}},
-            "destination": {"location": {"latLng": {"latitude": target_cs['latitude'], "longitude": target_cs['longitude']}}},
-            "travelMode": "DRIVE"
-        }
-        g_res = requests.post(g_url, headers=headers, json=payload, timeout=5).json()
-
-        if 'routes' in g_res and len(g_res['routes']) > 0:
-            route = g_res['routes'][0]
-            base_geodist    = route.get('distanceMeters', 0) / 1000.0
-            dist_km         = base_geodist
-            encoded_poly    = route.get('polyline', {}).get('encodedPolyline', '')
-            if encoded_poly:
-                polyline_coords = polyline.decode(encoded_poly)
-            routing_source  = "Google Routes API"
-            route_debug_log.append("✅ Google Routes API: route decoded successfully.")
-        else:
-            g_err = g_res.get('error', {})
-            g_status = g_err.get('status', 'UNKNOWN')
-            g_msg = g_err.get('message', 'No routes found or unspecified error.')
-            route_debug_log.append(f"⚠️ Google Routes status: **{g_status}** — {g_msg}")
-    except Exception as e:
-        route_debug_log.append(f"❌ Google Routes request exception: `{type(e).__name__}: {e}`")
-
-    # ── STEP 2: OSRM fallback ─────────────────────────────────────────────────
-    if not polyline_coords:
-        try:
-            osrm_url = (
-                f"http://router.project-osrm.org/route/v1/driving/"
-                f"{f_lng},{f_lat};{target_cs['longitude']},{target_cs['latitude']}"
-                f"?overview=full&geometries=polyline"
-            )
-            o_res = requests.get(osrm_url, timeout=5).json()
-            if o_res.get('code') == 'Ok':
-                base_geodist    = o_res['routes'][0]['distance'] / 1000.0
-                dist_km         = base_geodist
-                encoded_poly    = o_res['routes'][0]['geometry']
-                polyline_coords = polyline.decode(encoded_poly)
-                routing_source  = "OSRM (public demo)"
-                route_debug_log.append("✅ OSRM fallback: route decoded successfully.")
-            else:
-                route_debug_log.append(f"⚠️ OSRM returned non-OK code: {o_res.get('code')}")
-        except Exception as e:
-            route_debug_log.append(f"❌ OSRM fallback exception: `{type(e).__name__}: {e}`")
-
-    # ── STEP 3: Straight-line fallback ────────────────────────────────────────
-    if not polyline_coords:
-        d_lat, d_lng    = target_cs['latitude'] - f_lat, target_cs['longitude'] - f_lng
-        polyline_coords = [
-            [f_lat, f_lng],
-            [f_lat + d_lat * 0.35, f_lng],
-            [f_lat + d_lat * 0.35, f_lng + d_lng * 0.65],
-            [target_cs['latitude'], target_cs['longitude']]
-        ]
-        dist_km = base_geodist * 1.35
-        route_debug_log.append(
-            "⚠️ Straight-line approximation used. Distance inflated ×1.35 to account for road detours."
-        )
-
-    q10 = CROP_MASTER[crop][3] if len(CROP_MASTER[crop]) > 3 else 2.5
-    respiration_acceleration = q10 ** ((temp - 20.0) / 10.0)
-    hei  = (temp * (storage_days + (actual_t * (target_cs['vibration_stress_index'] - 1.0)))) * respiration_acceleration
-    hl   = hum * storage_days
-    tdr, mci = actual_t / expect_t, arrival_v / avg_v
-    sri  = SRI_MONTHLY.get(c_date.month, 0.5)
-
-    try:
-        from utils.api_client import api_create_prediction
-        pred_payload = {
-            "crop": crop,
-            "district": district,
-            "temperature": temp,
-            "humidity": hum,
-            "road_condition": road_condition,
-            "actual_transit_days": actual_t,
-            "expected_transit_days": expect_t,
-            "storage_days": storage_days,
-            "quantity_tons": qty_tons,
-            "arrival_volume": arrival_v,
-            "avg_market_volume": avg_v,
-        }
-        
-        # Call the FastAPI backend
-        pred_resp = api_create_prediction(pred_payload)
-        pred_id = None
-        if pred_resp.status_code in [200, 201]:
-            backend_res = pred_resp.json()
-            pred_id = backend_res["id"]
-            prob_val = backend_res["spoilage_probability"]
-            loss_val = backend_res["loss_percentage"]
-            shelf_val = backend_res["shelf_life_days"]
-        else:
-            st.warning(f"⚠️ API returned {pred_resp.status_code}: {pred_resp.text}")
-            prob_val, loss_val, shelf_val = 0.384, 4.8, 5.2
-    except Exception as e:
-        st.warning(f"⚠️ ML inference fallback triggered (API unreachable): {e}")
-        pred_id = None
-        prob_val, loss_val, shelf_val = 0.384, 4.8, 5.2
-
-    st.session_state.results = {
-        "pred_id": pred_id,
-        "prob": prob_val, "loss": loss_val, "shelf": shelf_val,
-        "dist_km": dist_km, "base_dist": base_geodist,
-        "f_lat": f_lat, "f_lng": f_lng,
-        "cs_lat": target_cs['latitude'], "cs_lng": target_cs['longitude'],
-        "cs_name": target_cs['facility_name'],
-        "top_3_df": top_options,
-        "polyline_points": polyline_coords,
-        "crop_name": crop,
-        "road_cond": road_condition,
-        "mandi_price": target_cs['mandi_price_per_kg'],
-        "routing_source": routing_source,
-        "route_debug_log": route_debug_log,
-    }
+    st.session_state.top_options = top_options
+    st.session_state.results_cache = {}
+    st.session_state.gemini_cache = {}
+    st.session_state.selected_warehouse = top_options.iloc[0]['facility_name']
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OUTPUT PANEL
 # ─────────────────────────────────────────────────────────────────────────────
 with col_out:
-    if "results" in st.session_state:
+    if "top_options" in st.session_state and not st.session_state.top_options.empty:
         st.markdown(f'<div class="section-hdr">{txt["output_header"]}</div>', unsafe_allow_html=True)
-        res  = st.session_state.results
+        top_options = st.session_state.top_options
+        
+        selected_facility_name = st.session_state.get("selected_warehouse", top_options.iloc[0]['facility_name'])
+        
+        if selected_facility_name not in st.session_state.get('results_cache', {}):
+            with st.spinner(t("Calculating logistics and generating advisory...")):
+                target_cs = top_options[top_options['facility_name'] == selected_facility_name].iloc[0]
+                f_lat, f_lng = DISTRICT_COORDS.get(district, (12.97, 77.59))
+                
+                base_geodist    = target_cs['base_dist']
+                dist_km         = base_geodist
+                polyline_coords = []
+                routing_source  = "straight-line (fallback)"
+                route_debug_log = []
+
+                # ── STEP 1: Google Maps Routes API (computeRoutes) ───────────────────────
+                try:
+                    g_url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+                    headers = {
+                        "Content-Type": "application/json",
+                        "X-Goog-Api-Key": GOOGLE_API_KEY,
+                        "X-Goog-FieldMask": "routes.distanceMeters,routes.polyline.encodedPolyline"
+                    }
+                    payload = {
+                        "origin": {"location": {"latLng": {"latitude": f_lat, "longitude": f_lng}}},
+                        "destination": {"location": {"latLng": {"latitude": target_cs['latitude'], "longitude": target_cs['longitude']}}},
+                        "travelMode": "DRIVE"
+                    }
+                    g_res = requests.post(g_url, headers=headers, json=payload, timeout=5).json()
+
+                    if 'routes' in g_res and len(g_res['routes']) > 0:
+                        route = g_res['routes'][0]
+                        base_geodist    = route.get('distanceMeters', 0) / 1000.0
+                        dist_km         = base_geodist
+                        encoded_poly    = route.get('polyline', {}).get('encodedPolyline', '')
+                        if encoded_poly:
+                            polyline_coords = polyline.decode(encoded_poly)
+                        routing_source  = "Google Routes API"
+                        route_debug_log.append("✅ Google Routes API: route decoded successfully.")
+                    else:
+                        g_err = g_res.get('error', {})
+                        g_status = g_err.get('status', 'UNKNOWN')
+                        g_msg = g_err.get('message', 'No routes found or unspecified error.')
+                        route_debug_log.append(f"⚠️ Google Routes status: **{g_status}** — {g_msg}")
+                except Exception as e:
+                    route_debug_log.append(f"❌ Google Routes request exception: `{type(e).__name__}: {e}`")
+
+                # ── STEP 2: OSRM fallback ─────────────────────────────────────────────────
+                if not polyline_coords:
+                    try:
+                        osrm_url = (
+                            f"http://router.project-osrm.org/route/v1/driving/"
+                            f"{f_lng},{f_lat};{target_cs['longitude']},{target_cs['latitude']}"
+                            f"?overview=full&geometries=polyline"
+                        )
+                        o_res = requests.get(osrm_url, timeout=5).json()
+                        if o_res.get('code') == 'Ok':
+                            base_geodist    = o_res['routes'][0]['distance'] / 1000.0
+                            dist_km         = base_geodist
+                            encoded_poly    = o_res['routes'][0]['geometry']
+                            polyline_coords = polyline.decode(encoded_poly)
+                            routing_source  = "OSRM (public demo)"
+                            route_debug_log.append("✅ OSRM fallback: route decoded successfully.")
+                        else:
+                            route_debug_log.append(f"⚠️ OSRM returned non-OK code: {o_res.get('code')}")
+                    except Exception as e:
+                        route_debug_log.append(f"❌ OSRM fallback exception: `{type(e).__name__}: {e}`")
+
+                # ── STEP 3: Straight-line fallback ────────────────────────────────────────
+                if not polyline_coords:
+                    d_lat, d_lng    = target_cs['latitude'] - f_lat, target_cs['longitude'] - f_lng
+                    polyline_coords = [
+                        [f_lat, f_lng],
+                        [f_lat + d_lat * 0.35, f_lng],
+                        [f_lat + d_lat * 0.35, f_lng + d_lng * 0.65],
+                        [target_cs['latitude'], target_cs['longitude']]
+                    ]
+                    dist_km = base_geodist * 1.35
+                    route_debug_log.append(
+                        "⚠️ Straight-line approximation used. Distance inflated ×1.35 to account for road detours."
+                    )
+
+                q10 = CROP_MASTER[crop][3] if len(CROP_MASTER[crop]) > 3 else 2.5
+                respiration_acceleration = q10 ** ((temp - 20.0) / 10.0)
+                hei  = (temp * (storage_days + (actual_t * (target_cs['vibration_stress_index'] - 1.0)))) * respiration_acceleration
+                hl   = hum * storage_days
+                tdr, mci = actual_t / expect_t, arrival_v / avg_v
+                sri  = SRI_MONTHLY.get(c_date.month, 0.5)
+
+                try:
+                    from utils.api_client import api_create_prediction
+                    pred_payload = {
+                        "crop": crop,
+                        "district": district,
+                        "temperature": temp,
+                        "humidity": hum,
+                        "road_condition": road_condition,
+                        "actual_transit_days": actual_t,
+                        "expected_transit_days": expect_t,
+                        "storage_days": storage_days,
+                        "quantity_tons": qty_tons,
+                        "arrival_volume": arrival_v,
+                        "avg_market_volume": avg_v,
+                    }
+                    
+                    pred_resp = api_create_prediction(pred_payload)
+                    pred_id = None
+                    if pred_resp.status_code in [200, 201]:
+                        backend_res = pred_resp.json()
+                        pred_id = backend_res["id"]
+                        prob_val = backend_res["spoilage_probability"]
+                        loss_val = backend_res["loss_percentage"]
+                        shelf_val = backend_res["shelf_life_days"]
+                    else:
+                        st.warning(f"⚠️ API returned {pred_resp.status_code}: {pred_resp.text}")
+                        prob_val, loss_val, shelf_val = 0.384, 4.8, 5.2
+                except Exception as e:
+                    st.warning(f"⚠️ ML inference fallback triggered (API unreachable): {e}")
+                    pred_id = None
+                    prob_val, loss_val, shelf_val = 0.384, 4.8, 5.2
+
+                if 'results_cache' not in st.session_state:
+                    st.session_state.results_cache = {}
+                    
+                st.session_state.results_cache[selected_facility_name] = {
+                    "pred_id": pred_id,
+                    "prob": prob_val, "loss": loss_val, "shelf": shelf_val,
+                    "dist_km": dist_km, "base_dist": base_geodist,
+                    "f_lat": f_lat, "f_lng": f_lng,
+                    "cs_lat": target_cs['latitude'], "cs_lng": target_cs['longitude'],
+                    "cs_name": target_cs['facility_name'],
+                    "top_3_df": top_options,
+                    "polyline_points": polyline_coords,
+                    "crop_name": crop,
+                    "road_cond": road_condition,
+                    "mandi_price": target_cs['mandi_price_per_kg'],
+                    "capacity_mt": target_cs.get('capacity_mt', 5000),
+                    "available_capacity": target_cs.get('available_capacity', 100.0),
+                    "routing_source": routing_source,
+                    "route_debug_log": route_debug_log,
+                }
+        
+        res  = st.session_state.results_cache[selected_facility_name]
         risk = "HIGH" if res['prob'] > 0.6 else "MEDIUM" if res['prob'] > 0.3 else "LOW"
 
         # Gauge meter
@@ -838,88 +860,89 @@ with col_out:
 
             st.markdown(f'<div class="rec-box" style="background-color: {bg_color}; border-left: 5px solid {border_color}; color: {text_color};"><b>📌 {t("Action Recommendation")}:</b><br>{rec_txt}</div>', unsafe_allow_html=True)
 
-        # ── Routing diagnostic log removed as per user request ───────────────
-
         # ─────────────────────────────────────────────────────────────────────
         # 🤖 GENERATIVE AI PRESCRIPTIVE LAYER & TEXT-TO-SPEECH
-        #    FROM FILE 2:
-        #      • FIX-01 — correct Gemini response key: candidates[0]['content']['parts'][0]['text']
-        #      • FIX-04 — no bare except:, all exceptions caught as Exception
-        #      • Kannada advisory generated by a SEPARATE Gemini API call
-        #      • English fallback script kept when Gemini is unavailable
-        #      • gTTS synthesis with lang='kn' or 'en'
         # ─────────────────────────────────────────────────────────────────────
         st.write("---")
         st.markdown(f"### {txt['voice_output_hdr']}")
+
+        if 'gemini_cache' not in st.session_state:
+            st.session_state.gemini_cache = {}
 
         gemini_url = (
             f"https://generativelanguage.googleapis.com/v1beta"
             f"/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
         )
 
-        sys_prompt = (
-            f"You are a senior agricultural supply chain agronomist and logistics optimization director in Karnataka. "
-            f"Write a comprehensive, highly customized operational broadcast script for a farmer dispatching "
-            f"{qty_tons} tons of {crop} from their farm to the {res['cs_name']} storage facility.\n\n"
-            f"--- LIVE TELEMETRY SNAPSHOT ---\n"
-            f"* Crop Variant: {crop}\n"
-            f"* Source District: {district}\n"
-            f"* Route Infrastructure Quality: {road_condition}\n"
-            f"* Target Node: {res['cs_name']}\n"
-            f"* Environmental Temperature: {temp}°C\n"
-            f"* Model Spoilage Probability: {res['prob']*100:.1f}%\n"
-            f"* Model Remaining Shelf Life: {res['shelf']:.1f} Days\n"
-            f"* Expected Transit Window: {expect_t} Days\n"
-            f"* Actual Transit Window: {actual_t} Days\n"
-            f"* Current Mandi Market Price: ₹{res['mandi_price']}/kg\n\n"
-            f"--- MANDATORY BROADCAST STRUCTURE ---\n"
-            f"Generate a seamless, continuous speech script covering these exact elements in order. "
-            f"Do not include bullet points, markdown symbols, asterisks, bold text, or brackets. "
-            f"Write it purely as continuous flowing speech:\n"
-            f"1. PROFESSIONAL AGRICULTURAL GREETING: Start with a formal greeting tailored to a hard-working Indian farmer. "
-            f"Explicitly say that you are opening the automated telemetry data verification link for their specific harvest of "
-            f"{qty_tons} tons of {crop} originating out of the {district} distribution zone.\n"
-            f"2. BIOPHYSICAL BREAKDOWN: Explain how the current ambient routing temperature of {temp}°C, combined with a transit "
-            f"model of {actual_t} days over a {road_condition}, chemically accelerates tissue breakdown and cellular respiration "
-            f"in this batch. Directly mention the calculated spoilage probability of {res['prob']*100:.1f}% and a remaining shelf "
-            f"life of {res['shelf']:.1f} days.\n"
-            f"3. ACTIONABLE ROUTING & SUPPLY LOGISTICS ADVOCACY: Provide explicit commands on how to handle the vehicle. "
-            f"Tell them how to manage loading ventilation, speed adjustments based on the {road_condition}, and direct "
-            f"instructions for safe docking at {res['cs_name']}.\n"
-            f"4. FINANCIAL FORECAST & RESERVATION COMMAND: State whether immediate sale or cold storage holding is advised "
-            f"to secure the ₹{res['mandi_price']}/kg mandi market rate based on the {res['loss']:.1f}% volume loss threshold.\n"
-            f"5. SIGN-OFF OUTRO: Conclude with an inspiring, respectful agricultural closing blessing wishing them safety on the "
-            f"roads and a profitable market dispatch. Tell them to check the visual map on their dashboard screen and press the "
-            f"dispatch button to log their slot securely."
-        )
-
-        payload  = {"contents": [{"parts": [{"text": sys_prompt}]}]}
-        llm_text = None
-
-        if GEMINI_API_KEY:
-            try:
-                with st.spinner("🤖 Compiling In-Depth Agronomist Analytics Matrix..."):
-                    resp = requests.post(
-                        gemini_url, json=payload,
-                        headers={"Content-Type": "application/json"}, timeout=60
-                    )
-                    resp.raise_for_status()
-                    response_json = resp.json()
-                    llm_text = response_json['candidates'][0]['content']['parts'][0]['text']
-            except Exception as e:
-                pass
-
-        # English fallback script
-        if not llm_text:
-            llm_text = (
-                f"Namaste and welcome to the Karnataka Agricultural Intelligence System. We are verifying the telemetry profile for "
-                f"{qty_tons} tons of {crop} from the {district} sector. Current route temperatures are holding at {temp} degrees Celsius, "
-                f"causing our tree ensemble models to calculate a spoilage risk of {res['prob']*100:.1f} percent, with a remaining shelf life "
-                f"of {res['shelf']:.1f} days. To preserve your harvest and capture the market rate of {res['mandi_price']} rupees per kilogram, "
-                f"we highly recommend initializing immediate covered transport to the safe storage node at {res['cs_name']}. Please review the "
-                f"optimized route geometry displayed on your map console and engage the secure booking slot ledger below to finalize your dispatch. "
-                f"Thank you for powering our supply chain, and have a safe and highly profitable journey."
+        if selected_facility_name not in st.session_state.gemini_cache:
+            st.session_state.gemini_cache[selected_facility_name] = {'en': None, 'kn': None, 'audio_buf_en': None, 'audio_buf_kn': None}
+            
+            sys_prompt = (
+                f"You are a senior agricultural supply chain agronomist and logistics optimization director in Karnataka. "
+                f"Write a comprehensive, highly customized operational broadcast script for a farmer dispatching "
+                f"{qty_tons} tons of {crop} from their farm to the {res['cs_name']} storage facility.\n\n"
+                f"--- LIVE TELEMETRY SNAPSHOT ---\n"
+                f"* Crop Variant: {crop}\n"
+                f"* Source District: {district}\n"
+                f"* Route Infrastructure Quality: {road_condition}\n"
+                f"* Target Node: {res['cs_name']}\n"
+                f"* Environmental Temperature: {temp}°C\n"
+                f"* Model Spoilage Probability: {res['prob']*100:.1f}%\n"
+                f"* Model Remaining Shelf Life: {res['shelf']:.1f} Days\n"
+                f"* Expected Transit Window: {expect_t} Days\n"
+                f"* Actual Transit Window: {actual_t} Days\n"
+                f"* Current Mandi Market Price: ₹{res['mandi_price']}/kg\n\n"
+                f"--- MANDATORY BROADCAST STRUCTURE ---\n"
+                f"Generate a seamless, continuous speech script covering these exact elements in order. "
+                f"Do not include bullet points, markdown symbols, asterisks, bold text, or brackets. "
+                f"Write it purely as continuous flowing speech:\n"
+                f"1. PROFESSIONAL AGRICULTURAL GREETING: Start with a formal greeting tailored to a hard-working Indian farmer. "
+                f"Explicitly say that you are opening the automated telemetry data verification link for their specific harvest of "
+                f"{qty_tons} tons of {crop} originating out of the {district} distribution zone.\n"
+                f"2. BIOPHYSICAL BREAKDOWN: Explain how the current ambient routing temperature of {temp}°C, combined with a transit "
+                f"model of {actual_t} days over a {road_condition}, chemically accelerates tissue breakdown and cellular respiration "
+                f"in this batch. Directly mention the calculated spoilage probability of {res['prob']*100:.1f}% and a remaining shelf "
+                f"life of {res['shelf']:.1f} days.\n"
+                f"3. ACTIONABLE ROUTING & SUPPLY LOGISTICS ADVOCACY: Provide explicit commands on how to handle the vehicle. "
+                f"Tell them how to manage loading ventilation, speed adjustments based on the {road_condition}, and direct "
+                f"instructions for safe docking at {res['cs_name']}.\n"
+                f"4. FINANCIAL FORECAST & RESERVATION COMMAND: State whether immediate sale or cold storage holding is advised "
+                f"to secure the ₹{res['mandi_price']}/kg mandi market rate based on the {res['loss']:.1f}% volume loss threshold.\n"
+                f"5. SIGN-OFF OUTRO: Conclude with an inspiring, respectful agricultural closing blessing wishing them safety on the "
+                f"roads and a profitable market dispatch. Tell them to check the visual map on their dashboard screen and press the "
+                f"dispatch button to log their slot securely."
             )
+
+            payload  = {"contents": [{"parts": [{"text": sys_prompt}]}]}
+            llm_text = None
+
+            if GEMINI_API_KEY:
+                try:
+                    with st.spinner("🤖 Compiling In-Depth Agronomist Analytics Matrix..."):
+                        resp = requests.post(
+                            gemini_url, json=payload,
+                            headers={"Content-Type": "application/json"}, timeout=60
+                        )
+                        resp.raise_for_status()
+                        response_json = resp.json()
+                        llm_text = response_json['candidates'][0]['content']['parts'][0]['text']
+                except Exception as e:
+                    pass
+
+            if not llm_text:
+                llm_text = (
+                    f"Namaste and welcome to the Karnataka Agricultural Intelligence System. We are verifying the telemetry profile for "
+                    f"{qty_tons} tons of {crop} from the {district} sector. Current route temperatures are holding at {temp} degrees Celsius, "
+                    f"causing our tree ensemble models to calculate a spoilage risk of {res['prob']*100:.1f} percent, with a remaining shelf life "
+                    f"of {res['shelf']:.1f} days. To preserve your harvest and capture the market rate of {res['mandi_price']} rupees per kilogram, "
+                    f"we highly recommend initializing immediate covered transport to the safe storage node at {res['cs_name']}. Please review the "
+                    f"optimized route geometry displayed on your map console and engage the secure booking slot ledger below to finalize your dispatch. "
+                    f"Thank you for powering our supply chain, and have a safe and highly profitable journey."
+                )
+            
+            st.session_state.gemini_cache[selected_facility_name]['en'] = llm_text
+
+        llm_text = st.session_state.gemini_cache[selected_facility_name]['en']
 
         with st.expander("📄 View Full Advisory Transcript", expanded=True):
             st.write(llm_text)
@@ -931,8 +954,8 @@ with col_out:
         )
 
         if "Kannada" in audio_choice:
-            # ── Separate Gemini call to generate Kannada advisory text ────────
-            kannada_prompt = f"""
+            if not st.session_state.gemini_cache[selected_facility_name]['kn']:
+                kannada_prompt = f"""
 ನೀವು ಕರ್ನಾಟಕ ಕೃಷಿ ಇಂಟೆಲಿಜೆನ್ಸ್ ವ್ಯವಸ್ಥೆಯ ಹಿರಿಯ ಕೃಷಿ ಸರಬರಾಜು ಸರಪಳಿ ತಜ್ಞರು ಹಾಗೂ ಲಾಜಿಸ್ಟಿಕ್ಸ್ ನಿರ್ದೇಶಕರಾಗಿದ್ದೀರಿ.
 
 ಕೆಳಗಿನ ಮಾಹಿತಿಯನ್ನು ಆಧರಿಸಿ ರೈತನಿಗೆ ನೇರವಾಗಿ ಮಾತನಾಡುವ ರೀತಿಯಲ್ಲಿ ಸಂಪೂರ್ಣ ವೃತ್ತಿಪರ ಕನ್ನಡ ಸಲಹೆಯನ್ನು ರಚಿಸಿ.
@@ -958,185 +981,192 @@ with col_out:
 ಒಟ್ಟು ಸುಮಾರು ೫೦೦ ರಿಂದ ೬೫೦ ಪದಗಳೊಳಗೆ ಇರಬೇಕು.
 ಯಾವುದೇ Markdown ಬೇಡ. Bullet Points ಬೇಡ. Heading ಬೇಡ. Numbering ಬೇಡ. Symbols ಬೇಡ.
 ನಿರಂತರವಾಗಿ ಮಾತನಾಡುವ ಕನ್ನಡ ಪಠ್ಯ ಮಾತ್ರ ನೀಡಿ."""
-
-            tts_script = llm_text  # fallback to English advisory if Kannada call fails
-
-            if GEMINI_API_KEY:
-                try:
-                    kn_payload = {"contents": [{"parts": [{"text": kannada_prompt}]}]}
-                    with st.spinner("🎙️ Generating Kannada Advisory..."):
-                        kn_resp = requests.post(
-                            gemini_url, json=kn_payload,
-                            headers={"Content-Type": "application/json"}, timeout=60
-                        )
-                        kn_resp.raise_for_status()
-                        kn_json    = kn_resp.json()
-                        tts_script = kn_json["candidates"][0]["content"]["parts"][0]["text"]
-                except Exception as e:
-                    pass
-
+                tts_script = llm_text
+                if GEMINI_API_KEY:
+                    try:
+                        kn_payload = {"contents": [{"parts": [{"text": kannada_prompt}]}]}
+                        with st.spinner("🎙️ Generating Kannada Advisory..."):
+                            kn_resp = requests.post(
+                                gemini_url, json=kn_payload,
+                                headers={"Content-Type": "application/json"}, timeout=60
+                            )
+                            kn_resp.raise_for_status()
+                            kn_json    = kn_resp.json()
+                            tts_script = kn_json["candidates"][0]["content"]["parts"][0]["text"]
+                    except Exception as e:
+                        pass
+                st.session_state.gemini_cache[selected_facility_name]['kn'] = tts_script
+            
+            tts_script = st.session_state.gemini_cache[selected_facility_name]['kn']
             audio_lang = "kn"
+            audio_cache_key = 'audio_buf_kn'
         else:
             tts_script = llm_text
             audio_lang = "en"
+            audio_cache_key = 'audio_buf_en'
 
         # ── gTTS Audio Synthesis ──────────────────────────────────────────────
-        with st.spinner("🔊 Synthesizing High-Fidelity Audio Waveform..."):
-            try:
-                tts       = gTTS(text=tts_script, lang=audio_lang, slow=False)
-                audio_buf = io.BytesIO()
-                tts.write_to_fp(audio_buf)
-                st.audio(audio_buf.getvalue(), format="audio/mp3")
-            except Exception as e:
-                st.caption(f"🔊 Audio synthesis engine unavailable: {e}")
-    
+        if not st.session_state.gemini_cache[selected_facility_name][audio_cache_key]:
+            with st.spinner("🔊 Synthesizing High-Fidelity Audio Waveform..."):
+                try:
+                    tts       = gTTS(text=tts_script, lang=audio_lang, slow=False)
+                    audio_buf = io.BytesIO()
+                    tts.write_to_fp(audio_buf)
+                    st.session_state.gemini_cache[selected_facility_name][audio_cache_key] = audio_buf.getvalue()
+                except Exception as e:
+                    st.caption(f"🔊 Audio synthesis engine unavailable: {e}")
+        
+        if st.session_state.gemini_cache[selected_facility_name][audio_cache_key]:
+            st.audio(st.session_state.gemini_cache[selected_facility_name][audio_cache_key], format="audio/mp3")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 📍 🗺️ GEO-SPATIAL LOGISTICS MAP & ALTERNATIVE FACILITIES LAYER
-# (unchanged from File 1 — light CARTO basemap, AntPath animated route)
 # ─────────────────────────────────────────────────────────────────────────────
-if "results" in st.session_state:
-    res  = st.session_state.results
-    risk = "HIGH" if res['prob'] > 0.6 else "MEDIUM" if res['prob'] > 0.3 else "LOW"
+if "top_options" in st.session_state and not st.session_state.top_options.empty:
+    selected_facility_name = st.session_state.get("selected_warehouse")
+    if selected_facility_name and selected_facility_name in st.session_state.get('results_cache', {}):
+        res  = st.session_state.results_cache[selected_facility_name]
+        risk = "HIGH" if res['prob'] > 0.6 else "MEDIUM" if res['prob'] > 0.3 else "LOW"
 
-    st.markdown(t("---"))
-    st.markdown(f'<div class="section-hdr">{txt["optimal_route"]}</div>', unsafe_allow_html=True)
+        st.markdown(t("---"))
+        st.markdown(f'<div class="section-hdr">{txt["optimal_route"]}</div>', unsafe_allow_html=True)
 
-    col_map, col_details = st.columns([7, 5], gap="medium")
+        col_map, col_details = st.columns([7, 5], gap="medium")
 
-    with col_map:
-        m = folium.Map(
-            location=[res['f_lat'], res['f_lng']],
-            zoom_start=10,
-            control_scale=True,
-            tiles="CartoDB positron"
-        )
+        with col_map:
+            m = folium.Map(
+                location=[res['f_lat'], res['f_lng']],
+                zoom_start=10,
+                control_scale=True,
+                tiles="CartoDB positron"
+            )
 
-        folium.CircleMarker(
-            location=[res['f_lat'], res['f_lng']],
-            radius=7, color="#ffffff", weight=2,
-            fill=True, fill_color="#28a745", fill_opacity=1.0,
-            tooltip=f"Origin Farm ({district})"
-        ).add_to(m)
-        folium.Marker(
-            [res['f_lat'], res['f_lng']],
-            icon=folium.DivIcon(html="""
-                <div style="font-size:12px; font-weight:600; color:#333;
-                            transform: translate(-10px, -28px); white-space:nowrap;">
-                    Origin
-                </div>
-            """)
-        ).add_to(m)
-
-        folium.CircleMarker(
-            location=[res['cs_lat'], res['cs_lng']],
-            radius=7, color="#ffffff", weight=2,
-            fill=True, fill_color="#dc3545", fill_opacity=1.0,
-            tooltip=f"Target Depot: {res['cs_name']}"
-        ).add_to(m)
-        folium.Marker(
-            [res['cs_lat'], res['cs_lng']],
-            icon=folium.DivIcon(html=f"""
-                <div style="font-size:12px; font-weight:600; color:#333;
-                            transform: translate(-10px, -28px); white-space:nowrap;">
-                    {res['cs_name'][:18]}
-                </div>
-            """)
-        ).add_to(m)
-
-        if res['polyline_points']:
-            AntPath(
-                res['polyline_points'],
-                color="#3388ff", weight=5, opacity=0.9,
-                dash_array=[10, 20], delay=800, pulse_color="#ffffff"
+            folium.CircleMarker(
+                location=[res['f_lat'], res['f_lng']],
+                radius=7, color="#ffffff", weight=2,
+                fill=True, fill_color="#28a745", fill_opacity=1.0,
+                tooltip=f"Origin Farm ({district})"
             ).add_to(m)
-
-            mid_idx   = len(res['polyline_points']) // 2
-            mid_point = res['polyline_points'][mid_idx]
             folium.Marker(
-                mid_point,
+                [res['f_lat'], res['f_lng']],
                 icon=folium.DivIcon(html="""
-                    <div style="background:#3388ff; width:28px; height:28px; border-radius:50%;
-                                display:flex; align-items:center; justify-content:center;
-                                box-shadow:0 2px 5px rgba(0,0,0,0.3); transform: translate(-50%, -50%);
-                                font-size:14px;">
-                        🚚
+                    <div style="font-size:12px; font-weight:600; color:#333;
+                                transform: translate(-10px, -28px); white-space:nowrap;">
+                        Origin
                     </div>
                 """)
             ).add_to(m)
 
-        st_folium(m, width="100%", height=380, returned_objects=[])
+            folium.CircleMarker(
+                location=[res['cs_lat'], res['cs_lng']],
+                radius=7, color="#ffffff", weight=2,
+                fill=True, fill_color="#dc3545", fill_opacity=1.0,
+                tooltip=f"Target Depot: {res['cs_name']}"
+            ).add_to(m)
+            folium.Marker(
+                [res['cs_lat'], res['cs_lng']],
+                icon=folium.DivIcon(html=f"""
+                    <div style="font-size:12px; font-weight:600; color:#333;
+                                transform: translate(-10px, -28px); white-space:nowrap;">
+                        {res['cs_name'][:18]}
+                    </div>
+                """)
+            ).add_to(m)
 
-        # FIX-08: caption notes straight-line inflation where applied
-        caption_suffix = " (distance ×1.35 applied)" if "straight-line" in res.get("routing_source", "") else ""
-        st.caption(f"🛣️ Route source: {res.get('routing_source', 'unknown')}{caption_suffix}")
+            if res['polyline_points']:
+                AntPath(
+                    res['polyline_points'],
+                    color="#3388ff", weight=5, opacity=0.9,
+                    dash_array=[10, 20], delay=800, pulse_color="#ffffff"
+                ).add_to(m)
 
-    with col_details:
-        st.markdown(f"### 🚛 Optimal Node Logistics Matrix")
-        st.markdown(f"**🎯 Optimized Target:** `{res['cs_name']}`")
-        st.markdown(f"**{txt['distance_msg']}:** `{res['dist_km']:.2f} KM` *(Infrastructure Adjusted Matrix)*")
-        st.markdown(f"**📈 Regional Market Spot Price:** `₹{res['mandi_price']:.2f} / KG`")
+                mid_idx   = len(res['polyline_points']) // 2
+                mid_point = res['polyline_points'][mid_idx]
+                folium.Marker(
+                    mid_point,
+                    icon=folium.DivIcon(html="""
+                        <div style="background:#3388ff; width:28px; height:28px; border-radius:50%;
+                                    display:flex; align-items:center; justify-content:center;
+                                    box-shadow:0 2px 5px rgba(0,0,0,0.3); transform: translate(-50%, -50%);
+                                    font-size:14px;">
+                            🚚
+                        </div>
+                    """)
+                ).add_to(m)
 
-        st.markdown(f'<div class="rec-box"><b>{txt["book_hdr"]}</b><br>Slot capacity lock is guaranteed under BaaS protocols for node validation.</div>', unsafe_allow_html=True)
+            st_folium(m, width="100%", height=380, returned_objects=[])
 
-        booking_mode = st.radio(t("Booking Mode"), [t("Random Booking"), t("Manual Booking")], horizontal=True)
-        if booking_mode == t("Manual Booking"):
-            manual_vid = st.text_input(t("Enter Vehicle Registration Number"), max_chars=10, placeholder="e.g. KA01AB1234")
-        else:
-            manual_vid = ""
+            caption_suffix = " (distance ×1.35 applied)" if "straight-line" in res.get("routing_source", "") else ""
+            st.caption(f"🛣️ Route source: {res.get('routing_source', 'unknown')}{caption_suffix}")
 
-        if st.button(txt["book_btn"], type="primary", use_container_width=True):
+        with col_details:
+            st.markdown(f"### 🚛 Optimal Node Logistics Matrix")
+            st.selectbox(
+                "🎯 Optimized Target",
+                options=top_options['facility_name'].tolist(),
+                key="selected_warehouse"
+            )
+            st.markdown(f"**{txt['distance_msg']}:** `{res['dist_km']:.2f} KM` *(Infrastructure Adjusted Matrix)*")
+            st.markdown(f"**📈 Regional Market Spot Price:** `₹{res['mandi_price']:.2f} / KG`")
+            st.markdown(f"**🏢 Facility Capacity:** `{res.get('capacity_mt', 5000):.0f} Tons` | **Available Space:** `{res.get('available_capacity', 100.0):.1f} Tons`")
+
+            st.markdown(f'<div class="rec-box"><b>{txt["book_hdr"]}</b><br>Slot capacity lock is guaranteed under BaaS protocols for node validation.</div>', unsafe_allow_html=True)
+
+            booking_mode = st.radio(t("Booking Mode"), [t("Random Booking"), t("Manual Booking")], horizontal=True)
             if booking_mode == t("Manual Booking"):
-                if not manual_vid.strip():
-                    st.error(t("Please enter a vehicle registration number."))
-                    st.stop()
-                # Use exactly the vehicle registration number provided by the user
-                vehicle_id = manual_vid.strip().upper()
+                manual_vid = st.text_input(t("Enter Vehicle Registration Number"), max_chars=10, placeholder="e.g. KA01AB1234")
             else:
-                vehicle_id = f"KA03EX{random.randint(1000, 9999)}"
-            eta_calc   = max(0.5, round(res['base_dist'] / 40.0, 1))
-            
-            # Use FastAPI instead of CSV
-            try:
-                from utils.api_client import api_create_shipment
-                
-                # Fetch the prediction ID if we have it
-                pred_id = res.get("pred_id")
-                
-                ship_payload = {
-                    "prediction_id": pred_id,
-                    "booking_id": vehicle_id,
-                    "crop": res["crop_name"],
-                    "tonnage": float(qty_tons),
-                    "destination": res["cs_name"],
-                    "route_quality": res["road_cond"],
-                    "eta_hours": f"{eta_calc} hours",
-                    "risk_status": f"{risk} RISK",
-                    "shelf_days_calculated": float(res["shelf"]),
-                }
-                
-                ship_resp = api_create_shipment(ship_payload)
-                if ship_resp.status_code in [200, 201]:
-                    st.success(txt["success_booking"])
-                    st.info(f"🚚 **{txt['eta_msg']}:** ~{eta_calc} {txt['hours_lbl']} | ID: `{vehicle_id}`")
-                else:
-                    st.error(f"Failed to create shipment via API. (Status {ship_resp.status_code})")
-                    st.write(ship_resp.text)
-            except Exception as e:
-                st.error(f"Could not reach backend API for booking: {e}")
+                manual_vid = ""
 
-    # Full-width bordered card — Top 3 Alternative Facilities table
-    with st.container(border=True):
-        st.markdown(f'<div class="facility-card-hdr">{txt["alt_table_hdr"]}</div>', unsafe_allow_html=True)
-        df_alt         = res['top_3_df'].copy()
-        df_alt_display = pd.DataFrame({
-            txt["col_fac"]:    df_alt['facility_name'],
-            txt["col_dist"]:   df_alt['district'],
-            txt["col_kms"]:    df_alt['base_dist'].map('{:.1f} KM'.format),
-            txt["col_rate"]:   df_alt['mandi_price_per_kg'].map('₹{:.2f}/KG'.format),
-            txt["col_payout"]: df_alt['net_estimated_payout'].map('₹{:,.0f}'.format)
-        })
-        st.dataframe(df_alt_display, use_container_width=True, hide_index=True)
+            if st.button(txt["book_btn"], type="primary", use_container_width=True):
+                if booking_mode == t("Manual Booking"):
+                    if not manual_vid.strip():
+                        st.error(t("Please enter a vehicle registration number."))
+                        st.stop()
+                    vehicle_id = manual_vid.strip().upper()
+                else:
+                    vehicle_id = f"KA03EX{random.randint(1000, 9999)}"
+                eta_calc   = max(0.5, round(res['base_dist'] / 40.0, 1))
+                
+                try:
+                    from utils.api_client import api_create_shipment
+                    pred_id = res.get("pred_id")
+                    
+                    ship_payload = {
+                        "prediction_id": pred_id,
+                        "booking_id": vehicle_id,
+                        "crop": res["crop_name"],
+                        "tonnage": float(qty_tons),
+                        "destination": res["cs_name"],
+                        "route_quality": res["road_cond"],
+                        "eta_hours": f"{eta_calc} hours",
+                        "risk_status": f"{risk} RISK",
+                        "shelf_days_calculated": float(res["shelf"]),
+                    }
+                    
+                    ship_resp = api_create_shipment(ship_payload)
+                    if ship_resp.status_code in [200, 201]:
+                        st.success(txt["success_booking"])
+                        st.info(f"🚚 **{txt['eta_msg']}:** ~{eta_calc} {txt['hours_lbl']} | ID: `{vehicle_id}`")
+                    else:
+                        st.error(f"Failed to create shipment via API. (Status {ship_resp.status_code})")
+                        st.write(ship_resp.text)
+                except Exception as e:
+                    st.error(f"Could not reach backend API for booking: {e}")
+
+        # Full-width bordered card — Top 3 Alternative Facilities table
+        with st.container(border=True):
+            st.markdown(f'<div class="facility-card-hdr">{txt["alt_table_hdr"]}</div>', unsafe_allow_html=True)
+            df_alt         = res['top_3_df'].copy()
+            df_alt_display = pd.DataFrame({
+                txt["col_fac"]:    df_alt['facility_name'],
+                txt["col_dist"]:   df_alt['district'],
+                txt["col_kms"]:    df_alt['base_dist'].map('{:.1f} KM'.format),
+                txt["col_rate"]:   df_alt['mandi_price_per_kg'].map('₹{:.2f}/KG'.format),
+                txt["col_payout"]: df_alt['net_estimated_payout'].map('₹{:,.0f}'.format)
+            })
+            st.dataframe(df_alt_display, use_container_width=True, hide_index=True)
 
 st.divider()
 st.caption("© 2026 BIT Bangalore - BaaS Administrative Control Panel Module v2.0")
+

@@ -115,8 +115,12 @@ with col_left:
         st.markdown(f"**{t('District Location')}:** {selected_wh['district']} | **{t('GPS Coordinates')}:** {selected_wh['latitude']:.4f}, {selected_wh['longitude']:.4f}")
 
         st.markdown('<div class="panel-box">', unsafe_allow_html=True)
+        new_capacity = st.number_input(t("Total Storage Quantity (Tons)"), min_value=1.0, value=float(selected_wh.get('capacity_mt', 5000)), step=100.0)
         new_occupancy = st.slider(t("Live Warehouse Storage Space Filled (%)"), min_value=0.0, max_value=100.0, value=float(selected_wh['occupancy_pct']), step=0.1)
         new_rent = st.number_input(t("Storage Rent Price (₹ / Ton / Day)"), min_value=50.0, max_value=500.0, value=float(selected_wh['price_per_ton_day']), step=10.0)
+
+        actual_storage_quantity = new_capacity * (new_occupancy / 100.0)
+        st.info(f"**Actual Storage Quantity Filled:** {actual_storage_quantity:.1f} Tons")
 
         if new_occupancy >= 95.0:
             st.error(t("🔴 **WAREHOUSE CAPACITY FULL:** Farmers cannot route new crop dispatches here until space clears up."))
@@ -127,10 +131,24 @@ with col_left:
             payload = {
                 "occupancy_pct": new_occupancy,
                 "price_per_ton_day": new_rent,
-                "base_temp_c": 14.5 if simulate_fault else 4.0
+                "base_temp_c": 14.5 if simulate_fault else 4.0,
+                "capacity_mt": int(new_capacity)
             }
             resp = api_update_warehouse(selected_wh["id"], payload)
             if resp.status_code == 200:
+                try:
+                    from pathlib import Path
+                    CS_CSV_PATH = Path("cold_storage_karnataka.csv")
+                    if CS_CSV_PATH.exists():
+                        df_cs = pd.read_csv(CS_CSV_PATH)
+                        mask = df_cs['facility_name'] == selected_name
+                        if mask.any():
+                            df_cs.loc[mask, 'occupancy_pct'] = new_occupancy
+                            df_cs.loc[mask, 'price_per_ton_day'] = new_rent
+                            df_cs.loc[mask, 'capacity_mt'] = new_capacity
+                            df_cs.to_csv(CS_CSV_PATH, index=False)
+                except Exception as e:
+                    pass
                 st.success(t("🎉 Database Synced! Successfully updated metrics for") + f" {selected_name}.")
                 st.rerun()
             else:
@@ -239,8 +257,17 @@ try:
     
     inventory = [
         s for s in all_shipments 
-        if s["status"] in ['In Storage', 'Redirected', 'Awaiting Buyer Pickup Confirmation', 'Listed (Accelerated)', 'Listed (Standard Mandi)']
+        if s["status"] == 'In Storage'
     ]
+    
+    for s in inventory:
+        base_shelf = float(s['shelf_days_calculated'])
+        hr = max(1.0, base_shelf * 24.0)
+        if simulate_fault:
+            hr = hr / 2.8
+        s['computed_hours_remaining'] = hr
+        
+    inventory = sorted(inventory, key=lambda x: x['computed_hours_remaining'])
 except Exception:
     inventory = []
 
@@ -248,12 +275,8 @@ with col_fifo:
     st.markdown(f'<div class="feature-hdr">{t("FIFO Monitor")}</div>', unsafe_allow_html=True)
     if inventory:
         for s in inventory:
-            base_shelf = float(s['shelf_days_calculated'])
-            hours_remaining = max(1.0, base_shelf * 24.0)
+            hours_remaining = s['computed_hours_remaining']
             
-            if simulate_fault and s['status'] == 'In Storage':
-                hours_remaining = hours_remaining / 2.8
-                
             card_border = "#dc3545" if hours_remaining < 36.0 or s['risk_status'] == "HIGH RISK" else "#ffc107" if hours_remaining < 72.0 else "#28a745"
             
             st.markdown(f"""
@@ -271,12 +294,8 @@ with col_mandi:
     
     if inventory:
         for s in inventory:
-            base_shelf = float(s['shelf_days_calculated'])
-            hours_remaining = max(1.0, base_shelf * 24.0)
+            hours_remaining = s['computed_hours_remaining']
             
-            if simulate_fault and s['status'] == 'In Storage':
-                hours_remaining = hours_remaining / 2.8
-                
             is_high_risk = s['risk_status'] == "HIGH RISK" or hours_remaining < 36.0
             
             if is_high_risk and s['status'] == 'In Storage':
@@ -320,12 +339,17 @@ with col_mandi:
             
             # LOW RISK LOGIC
             elif s['status'] == 'In Storage' and s['risk_status'] == 'LOW RISK':
-                st.success(t(f"✅ Vehicle {s['booking_id']} ({s['crop']}) is stable."))
-                if st.button(t("🛒 Standard Market Listing"), key=f"low_{s['booking_id']}", use_container_width=True):
-                    from utils.api_client import api_update_shipment
-                    api_update_shipment(s['id'], {"status": "Listed (Standard Mandi)"})
-                    st.success(t("Listed successfully."))
-                    st.rerun()
+                st.success(t(f"✅ Vehicle {s['booking_id']} ({s['crop']}) is stable. (Safe Storage Life: {hours_remaining:.1f} hrs)"))
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button(t("✅ Log as Safely Stored"), key=f"keep_{s['booking_id']}", use_container_width=True):
+                        st.success(t(f"Shipment {s['booking_id']} logged and maintained in storage."))
+                with c2:
+                    if st.button(t("🛒 Standard Market Listing"), key=f"low_{s['booking_id']}", use_container_width=True):
+                        from utils.api_client import api_update_shipment
+                        api_update_shipment(s['id'], {"status": "Listed (Standard Mandi)"})
+                        st.success(t("Listed successfully."))
+                        st.rerun()
 
             # ACTIVE LISTING STATE
             elif str(s['status']).startswith('Listed'):
@@ -346,34 +370,55 @@ with col_mandi:
 
 st.divider()
 
-# ── 🚚 ACTIVE SHIPMENTS (ALL STATUSES) ───────────────────────────────────────
-st.markdown(f"### 🚚 {t('Active Shipments (Logistics Tracking)')}")
+# ── 🚚 ACTIVE SHIPMENTS IN MARKET ───────────────────────────────────────────
+st.markdown(f"### 🚚 {t('Active Shipments in Market')}")
 
-try:
-    all_ship_resp = api_list_shipments(destination=selected_name)
-    all_shipments = all_ship_resp.json() if all_ship_resp.status_code == 200 else []
-except Exception:
-    all_shipments = []
 if all_shipments:
-    df_all_shipments = pd.DataFrame(all_shipments)
-    display_cols = ["booking_id", "crop", "tonnage", "destination", "risk_status", "status", "eta_hours"]
+    market_shipments = [s for s in all_shipments if s["status"] in ['Listed (Standard Mandi)', 'Listed (Accelerated)']]
+    if market_shipments:
+        df_market = pd.DataFrame(market_shipments)
+        st.dataframe(
+            df_market[["booking_id", "crop", "tonnage", "risk_status", "status"]].rename(columns={
+                "booking_id": t("Vehicle ID"),
+                "crop": t("Crop"),
+                "tonnage": t("Tons"),
+                "risk_status": t("Risk"),
+                "status": t("Status"),
+            }),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info(t("No active shipments in the market."))
+else:
+    st.info(t("No active shipments in the market."))
+
+st.divider()
+
+# ── 📚 LOGS & HISTORY ────────────────────────────────────────────────────────
+st.markdown(f"### 📚 {t('Shipment Logs & History')}")
+
+if all_shipments:
+    df_history = pd.DataFrame(all_shipments)
+    df_history = df_history.sort_values(by="id", ascending=False)
     
-    available_cols = [c for c in display_cols if c in df_all_shipments.columns]
+    display_cols = ["booking_id", "crop", "tonnage", "status", "risk_status", "eta_hours"]
+    available_cols = [c for c in display_cols if c in df_history.columns]
+    
     st.dataframe(
-        df_all_shipments[available_cols].rename(columns={
+        df_history[available_cols].rename(columns={
             "booking_id": t("Vehicle ID"),
             "crop": t("Crop"),
             "tonnage": t("Tons"),
-            "destination": t("Destination"),
-            "risk_status": t("Risk"),
             "status": t("Status"),
+            "risk_status": t("Risk"),
             "eta_hours": t("ETA"),
         }),
         use_container_width=True,
         hide_index=True,
     )
 else:
-    st.info(t("No active shipments."))
+    st.info(t("No history logs available."))
 
 st.divider()
 st.caption(t("© 2026 BIT Bangalore — Smart Warehouse Infrastructure"))

@@ -54,6 +54,8 @@ def update_warehouse(
         storage.price_per_ton_day = payload.price_per_ton_day
     if payload.base_temp_c is not None:
         storage.base_temp_c = payload.base_temp_c
+    if payload.capacity_mt is not None:
+        storage.capacity_mt = payload.capacity_mt
 
     db.commit()
     db.refresh(storage)
@@ -188,6 +190,12 @@ def dispatch_shipment(
         
     if current_user.id != shipment.user_id and current_user.email:
         background_tasks.add_task(send_email_notification, current_user.email, mgr_notif.title, mgr_notif.message)
+
+    if action == "factory":
+        buyer_email = "thearjun006@gmail.com"
+        buyer_title = f"Urgent Dispatch Alert: {shipment.booking_id}"
+        buyer_message = f"High-risk batch {shipment.booking_id} ({shipment.crop}, {shipment.tonnage} tons) from {facility_name} has been dispatched to your facility for immediate processing."
+        background_tasks.add_task(send_email_notification, buyer_email, buyer_title, buyer_message)
 
     return {
         "message": f"Shipment {shipment.booking_id} dispatched successfully.",

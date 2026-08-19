@@ -170,6 +170,7 @@ class WarehouseUpdate(BaseModel):
     occupancy_pct: Optional[float] = Field(None, ge=0, le=100)
     price_per_ton_day: Optional[float] = Field(None, ge=50, le=500)
     base_temp_c: Optional[float] = None
+    capacity_mt: Optional[int] = Field(None, ge=1)
 
 
 class WarehouseResponse(BaseModel):
