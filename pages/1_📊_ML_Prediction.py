@@ -1122,7 +1122,7 @@ if "top_options" in st.session_state and not st.session_state.top_options.empty:
             else:
                 manual_vid = ""
 
-            is_full = "(FULL)" in selected_warehouse
+            is_full = "(FULL)" in selected_facility_name
             if is_full:
                 st.error("This warehouse is currently FULL. Booking is disabled.")
 
