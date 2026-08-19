@@ -372,7 +372,7 @@ def calculate_optimized_warehouse_matrix(f_lat, f_lng, crop, qty_tons, road_cond
 
     df_cs['available_capacity_tons'] = df_cs.get('capacity_mt', 5000) * (1 - df_cs.get('occupancy_pct', 65.0) / 100.0)
     df_candidates = df_cs[
-        (df_cs.get('occupancy_pct', 65.0) < 95.0) & 
+        (df_cs.get('occupancy_pct', 65.0) >= 100.0) | 
         (df_cs['available_capacity_tons'] >= qty_tons)
     ].copy()
     df_candidates = df_candidates.sort_values(by='base_dist', ascending=True).head(3)
@@ -404,8 +404,12 @@ def calculate_optimized_warehouse_matrix(f_lat, f_lng, crop, qty_tons, road_cond
         total_kg           = qty_tons * 1000.0
         net_payout = (total_kg * mandi_p_kg * survival_prob) - total_transit_cost - storage_rent_cost
 
+        fac_name = row['facility_name']
+        if row.get('occupancy_pct', 65.0) >= 100.0:
+            fac_name += " (FULL)"
+
         calculated_rows.append({
-            'facility_name':          row['facility_name'],
+            'facility_name':          fac_name,
             'district':               facility_district,
             'latitude':               row['latitude'],
             'longitude':              row['longitude'],
@@ -1118,7 +1122,11 @@ if "top_options" in st.session_state and not st.session_state.top_options.empty:
             else:
                 manual_vid = ""
 
-            if st.button(txt["book_btn"], type="primary", use_container_width=True):
+            is_full = "(FULL)" in selected_warehouse
+            if is_full:
+                st.error("This warehouse is currently FULL. Booking is disabled.")
+
+            if st.button(txt["book_btn"], type="primary", use_container_width=True, disabled=is_full):
                 if booking_mode == t("Manual Booking"):
                     if not manual_vid.strip():
                         st.error(t("Please enter a vehicle registration number."))

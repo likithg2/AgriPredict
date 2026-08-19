@@ -1,5 +1,5 @@
 facility_id,facility_name,district,taluk,address,latitude,longitude,capacity_mt,temperature_min_c,temperature_max_c,commodities_stored,operator_type,contact_phone,contact_email,operational_status,nwrda_registered,year_established,occupancy_pct,price_per_ton_day,base_temp_c
-KA_CS_001,Kolar Cold Storage Pvt Ltd,Kolar,Kolar,APMC Yard Road Kolar 563101,13.136,78.1294,2500,-2,8,"Tomato,Potato,Onion",Private,08152-222345,kolarcs@gmail.com,Active,Yes,1998,45.6,150.0,4.0
+KA_CS_001,Kolar Cold Storage Pvt Ltd,Kolar,Kolar,APMC Yard Road Kolar 563101,13.136,78.1294,2500,-2,8,"Tomato,Potato,Onion",Private,08152-222345,kolarcs@gmail.com,Active,Yes,1998,100.0,150.0,4.0
 KA_CS_002,Karnataka State Warehousing Corporation - Kolar,Kolar,Kolar,NH-75 Bypass Kolar 563101,13.129,78.135,5000,0,10,"Tomato,Onion,Pulses",Government,08152-230101,kswc.kolar@kswc.in,Active,Yes,1985,53.0,180.0,4.0
 KA_CS_003,Sri Venkateshwara Cold Chain,Kolar,Mulbagal,Industrial Area Mulbagal 563131,13.1616,78.3956,1800,-1,6,"Tomato,Grapes,Carrot",Private,9900112233,svcc.mulbagal@gmail.com,Active,No,2012,95.3,180.0,4.0
 KA_CS_004,Chintamani Agri Cold Store,Chikkaballapur,Chintamani,Market Road Chintamani 563125,13.401,78.054,3000,-2,8,"Tomato,Mango,Potato",Private,08156-251234,chintcs@gmail.com,Active,Yes,2005,84.4,180.0,4.0
