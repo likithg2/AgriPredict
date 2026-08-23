@@ -49,6 +49,7 @@ CROP_MASTER = {
     "Capsicum": (14, 20, 0.85, 2.2), "Cauliflower": (5, 30, 1.05, 2.5),
     "Brinjal": (7, 25, 0.90, 2.3), "Okra": (3, 40, 1.10, 2.7),
     "Spinach": (3, 45, 1.20, 3.0), "Coconut": (60, 5, 0.10, 1.5),
+    "Cucumber": (14, 20, 0.90, 2.0),
 }
 
 DISTRICT_COORDS = {
@@ -157,7 +158,12 @@ def create_prediction(
     price_vol_index = 1.0
 
     try:
-        c_enc = artifacts['le_crop'].transform([payload.crop])[0]
+        try:
+            c_enc = artifacts['le_crop'].transform([payload.crop])[0]
+        except ValueError:
+            # Fallback for unseen crops in the original model
+            c_enc = artifacts['le_crop'].transform(["Tomato"])[0]
+            
         d_enc = artifacts['le_district'].transform([payload.district])[0]
         X_raw = np.array([[
             c_enc, d_enc, payload.storage_days, hei, hl, tdr, mci, sri,
@@ -167,6 +173,11 @@ def create_prediction(
         prob_val = float(artifacts['ensemble_clf'].predict_proba(X_scaled)[0][1])
         loss_val = max(0.0, float(artifacts['loss_regressor'].predict(X_scaled)[0]))
         shelf_val = max(0.0, float(artifacts['shelf_regressor'].predict(X_scaled)[0]))
+        
+        if payload.picture_spoilage_prob is not None:
+            prob_val = (prob_val + payload.picture_spoilage_prob) / 2.0
+            prob_val = max(0.0, min(1.0, prob_val))
+            
     except Exception:
         prob_val, loss_val, shelf_val = 0.384, 4.8, 5.2
 
@@ -187,6 +198,7 @@ def create_prediction(
         arrival_volume=payload.arrival_volume,
         avg_market_volume=payload.avg_market_volume,
         spoilage_probability=prob_val,
+        image_data=payload.image_data,
         shelf_life_days=shelf_val,
         loss_percentage=loss_val,
         financial_loss=financial_loss,

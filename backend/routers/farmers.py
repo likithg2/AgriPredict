@@ -44,7 +44,7 @@ def farmer_dashboard(
         Shipment.user_id == current_user.id
     ).scalar() or 0.0
 
-    # Active shipments (not delivered/redirected)
+    # Active shipments
     active_shipments = db.query(Shipment).filter(
         Shipment.user_id == current_user.id,
         Shipment.status.in_([
@@ -53,6 +53,7 @@ def farmer_dashboard(
             ShipmentStatus.listed_accelerated,
             ShipmentStatus.listed_standard,
             ShipmentStatus.awaiting_pickup,
+            ShipmentStatus.redirected,
         ]),
     ).order_by(Shipment.created_at.desc()).limit(10).all()
 

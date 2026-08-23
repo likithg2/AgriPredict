@@ -250,7 +250,8 @@ CROP_MASTER = {
     "Banana": (10, 20, 0.95, 2.2), "Mango": (14, 18, 0.80, 2.4), "Grapes": (14, 15, 0.75, 2.3),
     "Pomegranate": (30, 12, 0.55, 2.0), "Cabbage": (5, 35, 1.05, 2.5), "Capsicum": (14, 20, 0.85, 2.2),
     "Cauliflower": (5, 30, 1.05, 2.5), "Brinjal": (7, 25, 0.90, 2.3), "Okra": (3, 40, 1.10, 2.7),
-    "Spinach": (3, 45, 1.20, 3.0), "Coconut": (60, 5, 0.10, 1.5)
+    "Spinach": (3, 45, 1.20, 3.0), "Coconut": (60, 5, 0.10, 1.5),
+    "Cucumber": (14, 20, 0.90, 2.0)
 }
 
 # 🌟 EXPLICIT RE-MAPPING OF ALL 30 KARNATAKA COLD STORAGE DATASET COORDINATES
@@ -267,7 +268,7 @@ DISTRICT_COORDS = {
     "Vijayanagar": (15.27, 76.39), "Vijayapura": (16.83, 75.72), "Yadgir": (16.77, 77.13)
 }
 
-CROP_LIST     = sorted(CROP_MASTER.keys())
+CROP_LIST     = ["Tomato", "Onion", "Cucumber", "Potato"]
 DISTRICT_LIST = sorted(DISTRICT_COORDS.keys())
 SRI_MONTHLY   = {1:0.40, 2:0.45, 3:0.50, 4:0.55, 5:0.60, 6:0.80, 7:0.85, 8:0.82, 9:0.78, 10:0.65, 11:0.55, 12:0.42}
 
@@ -561,8 +562,18 @@ if uploaded_file is not None:
 
             if quality.lower() == "fresh":
                 st.success(t("✅ Fresh produce detected. Suitable for storage and transportation."))
+                st.session_state["picture_spoilage_prob"] = 1.0 - (confidence / 100.0)
             else:
                 st.error(t("❌ Rotten produce detected. Separate this batch before storage."))
+                st.session_state["picture_spoilage_prob"] = confidence / 100.0
+            
+            if crop_name in CROP_LIST:
+                st.session_state["viva_crop"] = crop_name
+            
+            import base64
+            uploaded_file.seek(0)
+            b64_img = base64.b64encode(uploaded_file.read()).decode("utf-8")
+            st.session_state["picture_base64"] = f"data:image/jpeg;base64,{b64_img}"
 
 st.markdown(t("---"))
 
@@ -658,6 +669,12 @@ with col_in:
     arrival_v = 180.0
     avg_v = 90.0
     qty_tons    = st.number_input(txt["qty_lbl"], min_value=0.1, value=qty_val)
+    
+    st.markdown("**Picture Spoilage Probability (From Image Analysis)**")
+    pic_prob = st.session_state.get("picture_spoilage_prob", None)
+    display_val = f"{pic_prob:.2%}" if pic_prob is not None else "Not Analyzed"
+    st.text_input("Disabled automatically populated", value=display_val, disabled=True, label_visibility="collapsed", key=f"pic_prob_disp_{pic_prob}")
+    
     predict_btn = st.button(txt["btn_analyze"], type="primary", use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -791,7 +808,11 @@ with col_out:
                         "arrival_volume": arrival_v,
                         "avg_market_volume": avg_v,
                     }
-                    
+                    if pic_prob is not None:
+                        pred_payload["picture_spoilage_prob"] = pic_prob
+                    if "picture_base64" in st.session_state:
+                        pred_payload["image_data"] = st.session_state["picture_base64"]
+
                     pred_resp = api_create_prediction(pred_payload)
                     pred_id = None
                     if pred_resp.status_code in [200, 201]:
@@ -800,6 +821,13 @@ with col_out:
                         prob_val = backend_res["spoilage_probability"]
                         loss_val = backend_res["loss_percentage"]
                         shelf_val = backend_res["shelf_life_days"]
+                        
+                        uploaded = st.session_state.get("quality_upload")
+                        if pred_id and uploaded is not None:
+                            import os
+                            os.makedirs("assets/uploads", exist_ok=True)
+                            with open(f"assets/uploads/{pred_id}.png", "wb") as f:
+                                f.write(uploaded.getvalue())
                     else:
                         st.warning(f"⚠️ API returned {pred_resp.status_code}: {pred_resp.text}")
                         prob_val, loss_val, shelf_val = 0.384, 4.8, 5.2

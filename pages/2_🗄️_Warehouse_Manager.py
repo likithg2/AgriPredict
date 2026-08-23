@@ -211,7 +211,7 @@ with col_inspect:
         target_shipment = next((s for s in active_shipments if s["booking_id"] == inspect_vid), None)
         
         c_date = st.date_input(t("Actual Arrival Date"))
-        actual_temp = st.number_input(t("Sensor Recorded Transit Temp (°C)"), value=28.5)
+        actual_temp = st.number_input(t("Sensor Recorded Transit Temp (°C)"), value=10.0)
         
         st.markdown(f"**{t('Declared Crop')}:** {target_shipment['crop']} | **{t('Declared Weight')}:** {target_shipment['tonnage']} {t('Tons')}")
         
@@ -240,8 +240,8 @@ with col_inspect:
 
 st.divider()
 
-# ── ⏳ FIFO BATCH LIFE MONITOR & EMERGENCY DISPATCH SWITCH CONTROLS ──────────
-st.markdown(f"## ⏳ {t('FIFO Batch Life Monitor & Emergency Dispatch Controls')}")
+# ── ⏳ SPOILAGE RISK MANAGEMENT & DISPATCH ──────────
+st.markdown(f"## ⏳ {t('Spoilage Risk Management & Dispatch')}")
 col_fifo, col_mandi = st.columns([1, 1], gap="large")
 
 # Mock industrial buyers registry
@@ -257,7 +257,13 @@ try:
     
     inventory = [
         s for s in all_shipments 
-        if s["status"] == 'In Storage'
+        if s["status"] in [
+            'In Storage', 
+            'Listed (Standard Mandi)', 
+            'Listed (Accelerated)', 
+            'Awaiting Buyer Pickup Confirmation',
+            'Redirected'
+        ]
     ]
     
     for s in inventory:
@@ -267,114 +273,139 @@ try:
             hr = hr / 2.8
         s['computed_hours_remaining'] = hr
         
-    inventory = sorted(inventory, key=lambda x: x['computed_hours_remaining'])
+    def risk_sort_key(s):
+        risk = s.get('risk_status', '')
+        if 'HIGH' in risk: return 0
+        if 'MEDIUM' in risk: return 1
+        return 2
+
+    inventory = sorted(inventory, key=lambda x: (risk_sort_key(x), x['computed_hours_remaining']))
 except Exception:
     inventory = []
 
-with col_fifo:
-    st.markdown(f'<div class="feature-hdr">{t("FIFO Monitor")}</div>', unsafe_allow_html=True)
-    if inventory:
-        for s in inventory:
-            hours_remaining = s['computed_hours_remaining']
-            
-            card_border = "#dc3545" if hours_remaining < 36.0 or s['risk_status'] == "HIGH RISK" else "#ffc107" if hours_remaining < 72.0 else "#28a745"
-            
+if inventory:
+    for s in inventory:
+        hours_remaining = s['computed_hours_remaining']
+        
+        risk_level = str(s.get('risk_status', '')).upper()
+        is_high_risk = "HIGH" in risk_level
+        is_med_risk = "MEDIUM" in risk_level
+        is_low_risk = "LOW" in risk_level
+        
+        card_border = "#dc3545" if is_high_risk else "#ffc107" if is_med_risk else "#28a745"
+        bg_color = "#fff5f5" if is_high_risk else "#fffdf5" if is_med_risk else "#f5fff5"
+        
+        with st.container():
             st.markdown(f"""
-            <div class="fifo-card" style="border-left: 5px solid {card_border}; padding: 10px; margin-bottom: 10px; background-color: #f9f9f9; border-radius: 5px; color: black;">
-            <strong>📦 {t('Batch ID')}:</strong> {s['booking_id']} | <strong>{t('Crop')}:</strong> {s['crop']} | <strong>{t('Status')}:</strong> {s['status']}<br>
-            <strong>{t('Tonnage')}:</strong> {s['tonnage']} {t('Tons')} | <strong>{t('Risk Profile')}:</strong> {s['risk_status']}<br>
-            <span style="color: {card_border}; font-weight: bold;">{t('Est. Storage Life')}: {hours_remaining:.1f} {t('Hours')}</span>
+            <div style="
+                border-left: 6px solid {card_border}; 
+                border-radius: 12px; 
+                padding: 20px; 
+                margin-bottom: 20px; 
+                background: linear-gradient(145deg, {bg_color}, #ffffff); 
+                color: #2c3e50; 
+                box-shadow: 0 4px 15px rgba(0,0,0,0.06);
+                transition: transform 0.2s ease-in-out;
+            ">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 10px;">
+                    <h3 style="margin: 0; display: flex; align-items: center; gap: 10px; font-family: 'Inter', sans-serif; font-size: 1.3rem;">
+                        <span style="background: #f8f9fa; padding: 6px 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">📦 Batch #{s['booking_id']}</span> 
+                        <span style="
+                            font-size: 0.8rem; 
+                            padding: 4px 10px; 
+                            border-radius: 20px; 
+                            background-color: {card_border}; 
+                            color: white; 
+                            font-weight: 600;
+                            letter-spacing: 0.5px;
+                            box-shadow: 0 2px 5px {card_border}80;
+                        ">{s['risk_status']}</span>
+                    </h3>
+                    <div style="font-size: 1.15rem; font-weight: 700; color: {card_border}; display: flex; align-items: center; gap: 6px;">
+                        ⏳ <span style="background: rgba(255,255,255,0.8); padding: 4px 10px; border-radius: 6px;">{hours_remaining:.1f} Hours</span>
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; font-size: 1rem; color: #495057;">
+                    <div style="background: rgba(255,255,255,0.6); padding: 8px 12px; border-radius: 8px;"><strong>🌾 Crop:</strong> <span style="color: #2b2b2b;">{s['crop']}</span></div>
+                    <div style="background: rgba(255,255,255,0.6); padding: 8px 12px; border-radius: 8px;"><strong>⚖️ Tonnage:</strong> <span style="color: #2b2b2b;">{s['tonnage']} Tons</span></div>
+                    <div style="background: rgba(255,255,255,0.6); padding: 8px 12px; border-radius: 8px;"><strong>📍 Status:</strong> <span style="color: #2b2b2b;">{s['status']}</span></div>
+                </div>
             </div>
             """, unsafe_allow_html=True)
-    else:
-        st.info(t("No inventory available."))
-
-with col_mandi:
-    st.markdown(f'<div class="feature-hdr">{t("Dispatch Router")}</div>', unsafe_allow_html=True)
-    
-    if inventory:
-        for s in inventory:
-            hours_remaining = s['computed_hours_remaining']
             
-            is_high_risk = s['risk_status'] == "HIGH RISK" or hours_remaining < 36.0
+            c_empty, c_act1, c_act2 = st.columns([2, 1, 1])
             
             if is_high_risk and s['status'] == 'In Storage':
-                st.error(t(f"🚨 URGENT: Vehicle {s['booking_id']} carrying {s['crop']} is at high risk of spoilage!"))
-                
-                # DYNAMIC REGISTRY LOOKUP SECTOR
                 current_crop_type = str(s['crop']).strip()
                 matching_rows = df_industrial_buyers[df_industrial_buyers['target_crop'].str.strip() == current_crop_type]
-                if not matching_rows.empty:
-                    factory_match = matching_rows.iloc[0]['buyer_name']
-                    proc_type = matching_rows.iloc[0]['processing_type']
-                else:
-                    factory_match = "Regional Agro-Processing Cooperative Hub"
-                    proc_type = "Standard Food Preservation & Salvage Lines"
-                    
-                st.markdown(f"""
-                * **{t('BaaS Industrial Protocol Activated')}**
-                * **{t('Buyer')}:** `{factory_match}`
-                * **{t('Pipeline')}:** `{proc_type}`
-                * **{t('Mitigation')}**: {t('Immediate food-processing conversion to preserve value')}
-                """)
-
-                # B2B COMMUNICATIONS MATRIX CONTROLS
-                if st.button(t("✉️ Dispatch Alert (Email Buyer)"), key=f"email_{s['booking_id']}", use_container_width=True):
-                    from utils.api_client import api_dispatch_shipment
-                    resp = api_dispatch_shipment(selected_wh["id"], s['id'], action="factory")
-                    if resp.status_code == 200:
-                        st.success(t("Dispatch triggered successfully. Email alerts have been sent."))
-                        st.rerun()
-                    else:
-                        st.error(t("Failed to dispatch shipment."))
-
-            # MEDIUM RISK LOGIC
+                factory_match = matching_rows.iloc[0]['buyer_name'] if not matching_rows.empty else "Regional Agro-Processing Cooperative Hub"
+                
+                with c_empty:
+                    st.error(f"🚨 URGENT: Auto-routing to {factory_match} to prevent total loss.")
+                with c_act2:
+                    if st.button("✉️ Alert & Dispatch", key=f"email_{s['booking_id']}", use_container_width=True, type="primary"):
+                        from utils.api_client import api_dispatch_shipment
+                        resp = api_dispatch_shipment(selected_wh["id"], s['id'], action="factory")
+                        if resp.status_code == 200:
+                            st.success(t("Dispatch triggered successfully. Email alerts have been sent."))
+                            st.rerun()
+                        else:
+                            st.error(t("Failed to dispatch shipment."))
+                            
             elif s['status'] == 'In Storage' and s['risk_status'] == 'MEDIUM RISK':
-                st.warning(t(f"⚠️ Vehicle {s['booking_id']} ({s['crop']}) is degrading."))
-                if st.button(t("⚡ Accelerated Market Listing"), key=f"med_{s['booking_id']}", use_container_width=True):
-                    from utils.api_client import api_update_shipment
-                    api_update_shipment(s['id'], {"status": "Listed (Accelerated)"})
-                    st.success(t("Listed successfully."))
-                    st.rerun()
-            
-            # LOW RISK LOGIC
+                with c_empty:
+                    st.warning(f"⚠️ Batch is degrading. Consider accelerated listing.")
+                with c_act1:
+                    if st.button("✅ Safely Store", key=f"keep_{s['booking_id']}", use_container_width=True):
+                        st.success(f"Shipment {s['booking_id']} maintained in storage.")
+                with c_act2:
+                    if st.button("⚡ Accelerated List", key=f"med_{s['booking_id']}", use_container_width=True, type="primary"):
+                        from utils.api_client import api_update_shipment
+                        api_update_shipment(s['id'], {"status": "Listed (Accelerated)"})
+                        st.success(t("Listed successfully."))
+                        st.rerun()
+                        
             elif s['status'] == 'In Storage' and s['risk_status'] == 'LOW RISK':
-                st.success(t(f"✅ Vehicle {s['booking_id']} ({s['crop']}) is stable. (Safe Storage Life: {hours_remaining:.1f} hrs)"))
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button(t("✅ Log as Safely Stored"), key=f"keep_{s['booking_id']}", use_container_width=True):
-                        st.success(t(f"Shipment {s['booking_id']} logged and maintained in storage."))
-                with c2:
-                    if st.button(t("🛒 Standard Market Listing"), key=f"low_{s['booking_id']}", use_container_width=True):
+                with c_empty:
+                    st.success(f"✅ Batch is stable and safely stored.")
+                with c_act1:
+                    if st.button("✅ Log Stored", key=f"keep_{s['booking_id']}", use_container_width=True):
+                        st.success(f"Shipment {s['booking_id']} maintained in storage.")
+                with c_act2:
+                    if st.button("🛒 Standard List", key=f"low_{s['booking_id']}", use_container_width=True):
                         from utils.api_client import api_update_shipment
                         api_update_shipment(s['id'], {"status": "Listed (Standard Mandi)"})
                         st.success(t("Listed successfully."))
                         st.rerun()
-
-            # ACTIVE LISTING STATE
-            elif str(s['status']).startswith('Listed'):
-                st.info(t(f"Active in Market: {s['booking_id']} is {s['status']}"))
                         
-            # AWAITING PICKUP & REDIRECTED
+            elif str(s['status']).startswith('Listed'):
+                with c_empty:
+                    st.info(f"📢 Active in Market: {s['status']}")
+                        
             elif s['status'] == 'Awaiting Buyer Pickup Confirmation':
-                st.info(t(f"⏳ Waiting for buyer pickup confirmation on {s['booking_id']}."))
-                if st.button(t("✅ Force Release"), key=f"release_{s['booking_id']}", use_container_width=True):
-                    from utils.api_client import api_update_shipment
-                    api_update_shipment(s['id'], {"status": "Redirected", "risk_status": "CLEARED"})
-                    st.success(t("Shipment released."))
-                    st.rerun()
+                with c_empty:
+                    st.info(f"⏳ Waiting for buyer pickup confirmation.")
+                with c_act2:
+                    if st.button("✅ Force Release", key=f"release_{s['booking_id']}", use_container_width=True):
+                        from utils.api_client import api_update_shipment
+                        api_update_shipment(s['id'], {"status": "Redirected", "risk_status": "CLEARED"})
+                        st.success(t("Shipment released."))
+                        st.rerun()
             elif s['status'] == 'Redirected':
-                st.warning(t(f"➡️ Shipment {s['booking_id']} diverted to processing pipeline."))
-    else:
-        st.info(t("No redirection needed."))
+                with c_empty:
+                    st.info(f"➡️ Shipment diverted to processing pipeline.")
+            
+            st.write("") # Spacer
+else:
+    st.info(t("No inventory available."))
 
 st.divider()
 
 # ── 🚚 ACTIVE SHIPMENTS IN MARKET ───────────────────────────────────────────
-st.markdown(f"### 🚚 {t('Active Shipments in Market')}")
+st.markdown(f"### 🚚 {t('Active Shipments (Market & Factory)')}")
 
 if all_shipments:
-    market_shipments = [s for s in all_shipments if s["status"] in ['Listed (Standard Mandi)', 'Listed (Accelerated)']]
+    market_shipments = [s for s in all_shipments if s["status"] in ['Listed (Standard Mandi)', 'Listed (Accelerated)', 'Awaiting Buyer Pickup Confirmation', 'Redirected']]
     if market_shipments:
         df_market = pd.DataFrame(market_shipments)
         st.dataframe(

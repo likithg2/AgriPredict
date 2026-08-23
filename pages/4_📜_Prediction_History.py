@@ -29,10 +29,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ── Filters ───────────────────────────────────────────────────────────────────
-CROP_LIST = sorted([
-    "Tomato", "Onion", "Potato", "Banana", "Mango", "Grapes", "Pomegranate",
-    "Cabbage", "Capsicum", "Cauliflower", "Brinjal", "Okra", "Spinach", "Coconut",
-])
+CROP_LIST = ["Tomato", "Onion", "Cucumber", "Potato"]
 DISTRICT_LIST = sorted([
     "Bagalkot", "Ballari", "Belagavi", "Bengaluru Rural", "Bengaluru Urban",
     "Bidar", "Chamarajanagar", "Chikkaballapur", "Chitradurga", "Dakshina Kannada",
@@ -107,12 +104,15 @@ if predictions:
         else:
             pred_id_str = f"PRED-{pred_id}"
             
+        
+        crop_emoji = {"Tomato": "🍅", "Onion": "🧅", "Cucumber": "🥒", "Potato": "🥔"}.get(row.get('crop'), "🌾")
+        
         card_html = f"""
 <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 15px; margin-bottom: 5px; background-color: #ffffff;">
 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
 <div>
 <h3 style="margin-top: 0; margin-bottom: 5px; display: flex; align-items: center; gap: 8px;">
-🌾 {row.get('crop')}
+{crop_emoji} {row.get('crop')}
 </h3>
 <div style="color: #6c757d; font-size: 0.9em;">
 {t('Record ID')}: <span style="color: #28a745;">#{pred_id_str}</span> &nbsp;&nbsp;|&nbsp;&nbsp; {t('Timestamp')}: {created_at}
@@ -153,6 +153,18 @@ if predictions:
                 * **{t('Remaining Shelf Life')}:** {row.get('shelf_life_days')} {t('Days')}
                 * **{t('Mandi Spot Rate')}:** ₹30.0/kg
                 """)
+                
+            if row.get('image_data'):
+                st.markdown("---")
+                st.markdown(f"**{t('Uploaded Image')}**")
+                
+                # Check if it has the data URI scheme, if not prepend it for display (though we save it with the scheme)
+                img_data_str = row['image_data']
+                if not img_data_str.startswith("data:image"):
+                    img_data_str = f"data:image/jpeg;base64,{img_data_str}"
+                    
+                st.image(img_data_str, width=300)
+                
         st.write("")
     # ── Export CSV ────────────────────────────────────────────────────────────
     csv_data = df.to_csv(index=False).encode("utf-8")
@@ -195,11 +207,16 @@ if predictions:
         with chart_col2:
             # Risk level distribution
             risk_counts = df["risk_level"].value_counts()
+            
+            # Map colors based on the actual labels to ensure correctness
+            color_map = {"HIGH": "#dc3545", "MEDIUM": "#ffc107", "LOW": "#28a745"}
+            mapped_colors = [color_map.get(label.upper(), "#333") for label in risk_counts.index.tolist()]
+            
             fig2 = go.Figure(data=[go.Pie(
                 labels=risk_counts.index.tolist(),
                 values=risk_counts.values.tolist(),
                 hole=0.4,
-                marker=dict(colors=["#dc3545", "#fd7e14", "#28a745"]),
+                marker=dict(colors=mapped_colors),
             )])
             fig2.update_layout(
                 title=t("Risk Level Distribution"),

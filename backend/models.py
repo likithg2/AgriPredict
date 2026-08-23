@@ -90,6 +90,7 @@ class Prediction(Base):
 
     # Output results
     spoilage_probability = Column(Float, nullable=False)
+    image_data = Column(Text, nullable=True)
     shelf_life_days = Column(Float, nullable=False)
     loss_percentage = Column(Float, nullable=False)
     financial_loss = Column(Float, nullable=False)

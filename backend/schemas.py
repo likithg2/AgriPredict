@@ -85,6 +85,9 @@ class PredictionCreate(BaseModel):
     quantity_tons: float = Field(..., gt=0)
     arrival_volume: float = 180.0
     avg_market_volume: float = 90.0
+    picture_spoilage_prob: Optional[float] = None
+    image_data: Optional[str] = None
+
 
 
 class PredictionResponse(BaseModel):
@@ -106,6 +109,7 @@ class PredictionResponse(BaseModel):
     recommended_facility: Optional[str]
     facility_distance_km: Optional[float]
     mandi_price_per_kg: Optional[float]
+    image_data: Optional[str] = None
     created_at: datetime
 
     class Config:
