@@ -11,7 +11,9 @@ uploaded_file = st.file_uploader(
 if uploaded_file:
     st.image(uploaded_file, width=300)
 
-    label, confidence = predict_quality(uploaded_file)
+    crop, quality, confidence, fresh_pct, rotten_pct = predict_quality(uploaded_file)
+    label = f"{quality} {crop}"
 
     st.success(f"Prediction: {label}")
     st.info(f"Confidence: {confidence:.2f}%")
+    st.write(f"**Fresh:** {fresh_pct:.2f}% | **Rotten:** {rotten_pct:.2f}%")

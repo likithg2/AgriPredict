@@ -68,7 +68,7 @@ PostHarvestLossPrediction/
 │   └── requirements.txt        # Backend dependencies
 │
 ├── models/
-│   └── vegetable_quality_model.keras # Deep Learning Model
+│   └── vegetable_quality_v5_model.keras # Deep Learning Model
 │
 ├── pages/
 │   ├── 0_🔐_Login.py

@@ -537,7 +537,7 @@ if uploaded_file is not None:
                 time.sleep(0.3)
 
                 st.write("🧠 Running MobileNetV2 model...")
-                crop_name, quality, confidence = predict_quality(uploaded_file)
+                crop_name, quality, confidence, fresh_pct, rotten_pct = predict_quality(uploaded_file)
 
                 st.write("📊 Computing confidence score...")
                 time.sleep(0.3)
@@ -549,16 +549,15 @@ if uploaded_file is not None:
 
             st.success(t("Analysis Completed"))
 
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-                st.metric("Crop", crop_name)
-
-            with c2:
-                st.metric("Quality", quality)
-
-            with c3:
-                st.metric("Confidence", f"{confidence:.2f}%")
+            st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; background-color: rgba(255, 255, 255, 0.05); padding: 15px 20px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 15px;">
+                    <div style="text-align: center;"><div style="font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Crop</div><div style="font-size: 1.1rem; font-weight: 600;">{crop_name}</div></div>
+                    <div style="text-align: center;"><div style="font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Quality</div><div style="font-size: 1.1rem; font-weight: 600;">{quality}</div></div>
+                    <div style="text-align: center;"><div style="font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Confidence</div><div style="font-size: 1.1rem; font-weight: 600;">{confidence:.1f}%</div></div>
+                    <div style="text-align: center;"><div style="font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; color: #4caf50;">Fresh</div><div style="font-size: 1.1rem; font-weight: 600; color: #4caf50;">{fresh_pct:.1f}%</div></div>
+                    <div style="text-align: center;"><div style="font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; color: #f44336;">Rotten</div><div style="font-size: 1.1rem; font-weight: 600; color: #f44336;">{rotten_pct:.1f}%</div></div>
+                </div>
+            """, unsafe_allow_html=True)
 
             if quality.lower() == "fresh":
                 st.success(t("✅ Fresh produce detected. Suitable for storage and transportation."))
@@ -595,66 +594,66 @@ with col_in:
     audio_input = mic_recorder(
         start_prompt=txt["voice_btn_start"],
         stop_prompt=txt["voice_btn_stop"],
-        key="farmer_audio_mic"
+        key="farmer_audio_mic",
+        format="wav"
     )
     if audio_input and audio_input.get("bytes"):
-        audio_bytes = audio_input["bytes"]
-        if len(audio_bytes) > 1000:
-            import speech_recognition as sr
-            import wave
-            recognizer = sr.Recognizer()
-            with st.spinner(" 🤖  Processing audio and transcribing..."):
-                try:
-                    wav_buffer = io.BytesIO()
-                    with wave.open(wav_buffer, "wb") as wav_file:
-                        wav_file.setnchannels(1)
-                        wav_file.setsampwidth(2)
-                        wav_file.setframerate(16000)
-                        wav_file.writeframes(audio_bytes)
-                    wav_buffer.seek(0)
-                    with sr.AudioFile(wav_buffer) as source:
-                        recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                        audio_data = recognizer.record(source)
-                    transcribed_text = recognizer.recognize_google(audio_data)
-                    if transcribed_text:
-                        st.success(f" 🗣️  **AI Transcribed:** '{transcribed_text}'")
-                        for c_item in CROP_LIST:
-                            if c_item.lower() in transcribed_text.lower():
-                                st.session_state["viva_crop"] = c_item
-                        for d_item in DISTRICT_LIST:
-                            if d_item.lower() in transcribed_text.lower():
-                                st.session_state["viva_district"] = d_item
-                        for w in transcribed_text.split():
-                            if w.replace(".", "", 1).isdigit():
-                                st.session_state["viva_qty"] = float(w)
+        audio_id = audio_input.get("id", str(hash(audio_input["bytes"])))
+        if st.session_state.get("last_processed_audio_id") != audio_id:
+            st.session_state["last_processed_audio_id"] = audio_id
+            audio_bytes = audio_input["bytes"]
+            if len(audio_bytes) > 1000:
+                import speech_recognition as sr
+                import wave
+                recognizer = sr.Recognizer()
+                with st.spinner(" 🤖  Processing audio and transcribing..."):
+                    try:
+                        wav_buffer = io.BytesIO(audio_bytes)
+                        with sr.AudioFile(wav_buffer) as source:
+                            recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                            audio_data = recognizer.record(source)
+                        transcribed_text = recognizer.recognize_google(audio_data)
+                        if transcribed_text:
+                            st.success(f" 🗣️  **AI Transcribed:** '{transcribed_text}'")
+                            tt_lower = transcribed_text.lower().replace("bangalore", "bengaluru")
+                            for c_item in CROP_LIST:
+                                if c_item.lower() in tt_lower:
+                                    st.session_state["viva_crop"] = c_item
+                            for d_item in DISTRICT_LIST:
+                                # Match exact or the first word (e.g. 'Bengaluru' matches 'Bengaluru Urban')
+                                if d_item.lower() in tt_lower or d_item.lower().split()[0] in tt_lower.split():
+                                    st.session_state["viva_district"] = d_item
+                                    break
+                            for w in transcribed_text.split():
+                                if w.replace(".", "", 1).isdigit():
+                                    st.session_state["viva_qty"] = float(w)
+                            st.rerun()
+                        else:
+                            st.warning(t(" ⚠️  Voice audio received, but text parsing returned blank."))
+                    except sr.UnknownValueError:
+                        st.warning(t(" ⚠️  Speech engine could not resolve the audio. Speak clearly near mic."))
+                    except Exception as e:
+                        st.error(f" ℹ️  Voice service gateway timed out: {e}. Snapping to safe demonstration values.")
+                        st.session_state["viva_crop"]     = "Potato"
+                        st.session_state["viva_district"] = "Belagavi"
+                        st.session_state["viva_qty"]      = 10.0
                         st.rerun()
-                    else:
-                        st.warning(t(" ⚠️  Voice audio received, but text parsing returned blank."))
-                except sr.UnknownValueError:
-                    st.warning(t(" ⚠️  Speech engine could not resolve the audio. Speak clearly near mic."))
-                except Exception as e:
-                    st.error(f" ℹ️  Voice service gateway timed out: {e}. Snapping to safe demonstration values.")
-                    st.session_state["viva_crop"]     = "Potato"
-                    st.session_state["viva_district"] = "Belagavi"
-                    st.session_state["viva_qty"]      = 10.0
-                    st.rerun()
-        else:
-            st.warning(t(" ⚠️  Audio recording sample was too short. Please speak clearly."))
+            else:
+                st.warning(t(" ⚠️  Audio recording sample was too short. Please speak clearly."))
     st.markdown(t("</div>"), unsafe_allow_html=True)
 
     user = st.session_state.get("user", {})
     default_dist = user.get("district", "Kolar")
     
-    viva_crop = st.session_state.get("viva_crop")
-    crop_idx = CROP_LIST.index(viva_crop) if viva_crop in CROP_LIST else None
-    
-    viva_dist = st.session_state.get("viva_district", default_dist)
-    dist_idx = DISTRICT_LIST.index(viva_dist) if viva_dist in DISTRICT_LIST else 0
+    if "viva_crop" not in st.session_state:
+        st.session_state["viva_crop"] = None
+    if "viva_district" not in st.session_state:
+        st.session_state["viva_district"] = default_dist
     
     qty_val = float(st.session_state.get("viva_qty", 10.0))
     
-    crop = st.selectbox(txt["crop_lbl"], CROP_LIST, index=crop_idx, placeholder="Select Crop")
-    district = st.selectbox(txt["dist_lbl"], DISTRICT_LIST, index=dist_idx, key="viva_district")
+    crop = st.selectbox(txt["crop_lbl"], CROP_LIST, key="viva_crop", index=None, placeholder="Select Crop")
+    district = st.selectbox(txt["dist_lbl"], DISTRICT_LIST, key="viva_district")
     st.markdown(f"**{txt['road_lbl']}**")
     road_condition = st.selectbox("Infrastructure Drop", ["National Highway", "State Highway", "Rural / Unpaved Road"], label_visibility="collapsed")
     c_date = st.date_input(txt["harvest_lbl"], date.today(), max_value=date.today())
@@ -695,7 +694,7 @@ if predict_btn:
 
     st.session_state.top_options = top_options
     st.session_state.results_cache = {}
-    st.session_state.gemini_cache = {}
+    st.session_state.gemini_cache_v2 = {}
     st.session_state.selected_warehouse = top_options.iloc[0]['facility_name']
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -898,16 +897,16 @@ with col_out:
         st.write("---")
         st.markdown(f"### {txt['voice_output_hdr']}")
 
-        if 'gemini_cache' not in st.session_state:
-            st.session_state.gemini_cache = {}
+        if 'gemini_cache_v2' not in st.session_state:
+            st.session_state.gemini_cache_v2 = {}
 
         gemini_url = (
             f"https://generativelanguage.googleapis.com/v1beta"
             f"/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
         )
 
-        if selected_facility_name not in st.session_state.gemini_cache:
-            st.session_state.gemini_cache[selected_facility_name] = {'en': None, 'kn': None, 'audio_buf_en': None, 'audio_buf_kn': None}
+        if selected_facility_name not in st.session_state.gemini_cache_v2:
+            st.session_state.gemini_cache_v2[selected_facility_name] = {'en': None, 'kn': None, 'audio_buf_en': None, 'audio_buf_kn': None}
             
             sys_prompt = (
                 f"You are a senior agricultural supply chain agronomist and logistics optimization director in Karnataka. "
@@ -959,6 +958,7 @@ with col_out:
                         response_json = resp.json()
                         llm_text = response_json['candidates'][0]['content']['parts'][0]['text']
                 except Exception as e:
+                    st.error(f"Gemini API Error (English): {e}")
                     pass
 
             if not llm_text:
@@ -972,12 +972,9 @@ with col_out:
                     f"Thank you for powering our supply chain, and have a safe and highly profitable journey."
                 )
             
-            st.session_state.gemini_cache[selected_facility_name]['en'] = llm_text
+            st.session_state.gemini_cache_v2[selected_facility_name]['en'] = llm_text
 
-        llm_text = st.session_state.gemini_cache[selected_facility_name]['en']
-
-        with st.expander("📄 View Full Advisory Transcript", expanded=True):
-            st.write(llm_text)
+        llm_text = st.session_state.gemini_cache_v2[selected_facility_name]['en']
 
         audio_choice = st.radio(
             txt["voice_lang_toggle"],
@@ -986,7 +983,7 @@ with col_out:
         )
 
         if "Kannada" in audio_choice:
-            if not st.session_state.gemini_cache[selected_facility_name]['kn']:
+            if not st.session_state.gemini_cache_v2[selected_facility_name]['kn']:
                 kannada_prompt = f"""
 ನೀವು ಕರ್ನಾಟಕ ಕೃಷಿ ಇಂಟೆಲಿಜೆನ್ಸ್ ವ್ಯವಸ್ಥೆಯ ಹಿರಿಯ ಕೃಷಿ ಸರಬರಾಜು ಸರಪಳಿ ತಜ್ಞರು ಹಾಗೂ ಲಾಜಿಸ್ಟಿಕ್ಸ್ ನಿರ್ದೇಶಕರಾಗಿದ್ದೀರಿ.
 
@@ -1026,30 +1023,34 @@ with col_out:
                             kn_json    = kn_resp.json()
                             tts_script = kn_json["candidates"][0]["content"]["parts"][0]["text"]
                     except Exception as e:
+                        st.error(f"Gemini API Error (Kannada): {e}")
                         pass
-                st.session_state.gemini_cache[selected_facility_name]['kn'] = tts_script
+                st.session_state.gemini_cache_v2[selected_facility_name]['kn'] = tts_script
             
-            tts_script = st.session_state.gemini_cache[selected_facility_name]['kn']
+            tts_script = st.session_state.gemini_cache_v2[selected_facility_name]['kn']
             audio_lang = "kn"
             audio_cache_key = 'audio_buf_kn'
         else:
             tts_script = llm_text
             audio_lang = "en"
             audio_cache_key = 'audio_buf_en'
+            
+        with st.expander("📄 View Full Advisory Transcript", expanded=True):
+            st.write(tts_script)
 
         # ── gTTS Audio Synthesis ──────────────────────────────────────────────
-        if not st.session_state.gemini_cache[selected_facility_name][audio_cache_key]:
+        if not st.session_state.gemini_cache_v2[selected_facility_name][audio_cache_key]:
             with st.spinner("🔊 Synthesizing High-Fidelity Audio Waveform..."):
                 try:
                     tts       = gTTS(text=tts_script, lang=audio_lang, slow=False)
                     audio_buf = io.BytesIO()
                     tts.write_to_fp(audio_buf)
-                    st.session_state.gemini_cache[selected_facility_name][audio_cache_key] = audio_buf.getvalue()
+                    st.session_state.gemini_cache_v2[selected_facility_name][audio_cache_key] = audio_buf.getvalue()
                 except Exception as e:
                     st.caption(f"🔊 Audio synthesis engine unavailable: {e}")
         
-        if st.session_state.gemini_cache[selected_facility_name][audio_cache_key]:
-            st.audio(st.session_state.gemini_cache[selected_facility_name][audio_cache_key], format="audio/mp3")
+        if st.session_state.gemini_cache_v2[selected_facility_name][audio_cache_key]:
+            st.audio(st.session_state.gemini_cache_v2[selected_facility_name][audio_cache_key], format="audio/mp3")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 📍 🗺️ GEO-SPATIAL LOGISTICS MAP & ALTERNATIVE FACILITIES LAYER
@@ -1070,7 +1071,7 @@ if "top_options" in st.session_state and not st.session_state.top_options.empty:
                 location=[res['f_lat'], res['f_lng']],
                 zoom_start=10,
                 control_scale=True,
-                tiles="CartoDB positron"
+                tiles="OpenStreetMap"
             )
 
             folium.CircleMarker(

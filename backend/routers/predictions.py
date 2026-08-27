@@ -175,7 +175,8 @@ def create_prediction(
         shelf_val = max(0.0, float(artifacts['shelf_regressor'].predict(X_scaled)[0]))
         
         if payload.picture_spoilage_prob is not None:
-            prob_val = (prob_val + payload.picture_spoilage_prob) / 2.0
+            # Ensure the final probability reflects visible spoilage if it's high
+            prob_val = max(prob_val, payload.picture_spoilage_prob)
             prob_val = max(0.0, min(1.0, prob_val))
             
     except Exception:
