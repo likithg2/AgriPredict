@@ -1,12 +1,14 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import Plot from 'react-plotly.js';
 import { toast } from 'react-hot-toast';
 
-import { Camera, Mic, Map as MapIcon, Volume2, Truck, Leaf, Loader } from 'lucide-react';
+import { Camera, Mic, Map as MapIcon, Volume2, Truck, Leaf, Loader, RotateCcw } from 'lucide-react';
 import Button from '../components/Button';
 import GlassCard from '../components/GlassCard';
 import { AuthContext } from '../context/AuthContext';
 import { LanguageContext } from '../context/LanguageContext';
+import { ThemeContext } from '../context/ThemeContext';
 import { predictionsAPI } from '../utils/api';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -40,6 +42,7 @@ const DISTRICT_LIST = [
 const Prediction = () => {
   const { user } = useContext(AuthContext);
   const { t, language } = useContext(LanguageContext);
+  const { isDark } = useContext(ThemeContext);
 
   const [formData, setFormData] = useState({
     crop: '',
@@ -62,14 +65,25 @@ const Prediction = () => {
   const [analyzingImage, setAnalyzingImage] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalImageSrc, setModalImageSrc] = useState(null);
+  const [barAnimated, setBarAnimated] = useState(false);
+  const outputRef = useRef(null);
+
+  // Trigger bar animation from 0 when analysis result arrives
+  useEffect(() => {
+    if (imageAnalysis) {
+      setBarAnimated(false);
+      const timer = setTimeout(() => setBarAnimated(true), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [imageAnalysis]);
 
   const [isRecording, setIsRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState(null);
-  const [processingVoice, setProcessingVoice] = useState(false);
   const [voiceText, setVoiceText] = useState('');
+  const [processingVoice, setProcessingVoice] = useState(false);
   
   const [weatherData, setWeatherData] = useState(null);
-  
+
   const [predictionResult, setPredictionResult] = useState(null);
   const [advisoryAudioUrl, setAdvisoryAudioUrl] = useState(null);
   const [fetchingAudio, setFetchingAudio] = useState(false);
@@ -105,6 +119,10 @@ const Prediction = () => {
       setSelectedFacilityIdx(0);
       setBookingMode('random');
       setVehicleReg('');
+      // Auto-scroll to output
+      setTimeout(() => {
+        outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
     }
   }, [predictionResult]);
 
@@ -326,11 +344,31 @@ const Prediction = () => {
       fetchAdvisoryAudio(data.advisory_transcript_en, 'en');
       
     } catch (err) {
-      setError(err.message);
+      const errorMsg = err.response?.data?.detail || err.message;
+      setError(errorMsg);
       setLoading(false);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleReset = () => {
+    setPredictionResult(null);
+    setImageFile(null);
+    setImagePreview(null);
+    setImageAnalysis(null);
+    setError('');
+    setFormData({
+      crop: '',
+      district: user?.district || 'Bengaluru Urban',
+      temperature: weatherData?.temp || 25.0,
+      humidity: weatherData?.humidity || 60.0,
+      road_condition: 'National Highway',
+      actual_transit_days: 3.0,
+      expected_transit_days: 1.5,
+      harvest_date: new Date().toISOString().split('T')[0],
+      quantity_tons: 10.0
+    });
   };
 
   return (
@@ -414,30 +452,104 @@ const Prediction = () => {
                       setIsModalOpen(true);
                     }}
                   />
+                  <AnimatePresence>
                   {imageAnalysis && (
-                    <div className="flex-1 grid grid-cols-2 gap-3">
-                      <div className="bg-background/40 p-3 rounded-xl border border-white/5 flex flex-col justify-center shadow-inner">
+                    <motion.div 
+                      className="flex-1 grid grid-cols-2 gap-3"
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
+                    >
+                      <motion.div 
+                        className="bg-background/40 p-3 rounded-xl border border-white/5 flex flex-col justify-center shadow-inner"
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.4, delay: 0.1 }}
+                      >
                         <div className="text-[10px] text-text-muted uppercase tracking-wider mb-1">Detected Crop</div>
                         <div className="text-lg font-bold text-green-800 dark:text-green-400">{imageAnalysis.crop_name}</div>
-                      </div>
-                      <div className="bg-background/40 p-3 rounded-xl border border-white/5 flex flex-col justify-center shadow-inner">
+                      </motion.div>
+                      <motion.div 
+                        className="bg-background/40 p-3 rounded-xl border border-white/5 flex flex-col justify-center shadow-inner"
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.4, delay: 0.2 }}
+                      >
                         <div className="text-[10px] text-text-muted uppercase tracking-wider mb-1">Overall Quality</div>
                         <div className={`text-lg font-bold ${imageAnalysis.quality === 'Rotten' ? 'text-red-400' : 'text-green-400'}`}>
                           {imageAnalysis.quality}
                         </div>
-                      </div>
-                      <div className="bg-green-500/5 p-3 rounded-xl border border-green-500/10 flex flex-col justify-center relative overflow-hidden">
-                        <div className="absolute -top-4 -right-4 w-16 h-16 bg-green-500/20 blur-2xl rounded-full pointer-events-none"></div>
-                        <div className="text-[10px] text-green-500/80 uppercase tracking-wider mb-1 relative z-10 font-semibold">Fresh Score</div>
-                        <div className="text-lg font-bold text-green-400 relative z-10">{imageAnalysis.fresh_pct.toFixed(1)}%</div>
-                      </div>
-                      <div className="bg-red-500/5 p-3 rounded-xl border border-red-500/10 flex flex-col justify-center relative overflow-hidden">
-                        <div className="absolute -top-4 -right-4 w-16 h-16 bg-red-500/20 blur-2xl rounded-full pointer-events-none"></div>
-                        <div className="text-[10px] text-red-500/80 uppercase tracking-wider mb-1 relative z-10 font-semibold">Spoilage Risk</div>
-                        <div className="text-lg font-bold text-red-400 relative z-10">{imageAnalysis.rotten_pct.toFixed(1)}%</div>
-                      </div>
-                    </div>
+                      </motion.div>
+                      <motion.div 
+                        className="col-span-2 bg-background/40 p-4 rounded-2xl border border-white/5 shadow-inner"
+                        initial={{ opacity: 0, y: 15 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.4, delay: 0.35 }}
+                      >
+                        <div className="w-full h-14 overflow-hidden flex" style={{ background: 'rgba(0,0,0,0.1)', borderRadius: '5px' }}>
+                          <div 
+                            className="h-full flex items-center justify-center relative"
+                            style={{
+                              width: barAnimated ? `${Math.max(imageAnalysis.fresh_pct, 18)}%` : '0%',
+                              background: 'linear-gradient(90deg, rgba(74,222,128,0.45), rgba(34,197,94,0.55))',
+                              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.35)',
+                              borderRadius: '5px 0 0 5px',
+                              transition: 'width 1.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            <span className="text-lg font-bold text-green-900 dark:text-green-100 drop-shadow-sm whitespace-nowrap" style={{ opacity: barAnimated ? 1 : 0, transition: 'opacity 0.5s ease 0.8s' }}>🌿 Fresh {imageAnalysis.fresh_pct.toFixed(1)}%</span>
+                          </div>
+                          <div 
+                            className="h-full flex items-center justify-center relative"
+                            style={{
+                              width: barAnimated ? `${Math.max(imageAnalysis.rotten_pct, 18)}%` : '0%',
+                              background: 'linear-gradient(90deg, rgba(248,113,113,0.45), rgba(239,68,68,0.55))',
+                              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25)',
+                              borderRadius: '0 5px 5px 0',
+                              transition: 'width 1.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            <span className="text-lg font-bold text-red-900 dark:text-red-100 drop-shadow-sm whitespace-nowrap" style={{ opacity: barAnimated ? 1 : 0, transition: 'opacity 0.5s ease 0.8s' }}>⚠️ Spoilage {imageAnalysis.rotten_pct.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.4, delay: 0.9 }}
+                        >
+                        {imageAnalysis.rotten_pct > 50 ? (
+                          <div className="mt-3 flex items-start gap-3 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20">
+                            <span className="text-2xl mt-0.5">🚨</span>
+                            <p className="text-sm text-red-400 font-medium leading-snug">
+                              High spoilage detected! Move your produce to cold storage immediately to minimize losses.
+                            </p>
+                          </div>
+                        ) : imageAnalysis.rotten_pct > 25 ? (
+                          <div className="mt-3 flex items-start gap-3 px-4 py-3 rounded-xl bg-orange-500/10 border border-orange-500/20">
+                            <span className="text-2xl mt-0.5">⚡</span>
+                            <p className="text-lg text-orange-400 font-medium leading-snug">
+                              Moderate spoilage risk. Consider expediting transport to cold storage for better shelf life.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="mt-3 flex items-start gap-3 px-4 py-3 rounded-xl bg-green-500/10 border border-green-500/20">
+                            <span className="text-2xl mt-0.5">✅</span>
+                            <p className="text-base text-green-400 font-medium leading-snug">
+                              Your produce looks fresh! Store properly and transport within the recommended window.
+                            </p>
+                          </div>
+                        )}
+                        <Button type="button" onClick={handleReset} variant="outline" className="mt-4 w-full flex items-center justify-center gap-2">
+                          <RotateCcw className="w-4 h-4" />
+                          {t("New Prediction")}
+                        </Button>
+                        </motion.div>
+                      </motion.div>
+                    </motion.div>
                   )}
+                  </AnimatePresence>
                 </div>
               )}
             </div>
@@ -521,9 +633,28 @@ const Prediction = () => {
                 </div>
               </div>
               
-              <Button type="submit" className="w-full mt-4 py-4 text-lg font-bold shadow-lg shadow-primary/30" disabled={loading}>
-                {loading ? 'Analyzing...' : t("Analyze Spoilage Risk")}
-              </Button>
+              <div className="flex gap-4 mt-4">
+                <Button type="submit" className="flex-1 py-4 text-lg font-bold shadow-lg shadow-primary/30" disabled={loading}>
+                  {loading ? 'Analyzing...' : t("Analyze Spoilage Risk")}
+                </Button>
+                
+                <AnimatePresence>
+                  {predictionResult && (
+                    <motion.div
+                      initial={{ opacity: 0, width: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, width: 'auto', scale: 1 }}
+                      exit={{ opacity: 0, width: 0, scale: 0.8 }}
+                      transition={{ duration: 0.3 }}
+                      className="flex"
+                    >
+                      <Button type="button" onClick={handleReset} variant="outline" className="h-full px-6 flex items-center justify-center gap-2">
+                        <RotateCcw className="w-5 h-5" />
+                        <span className="hidden sm:inline">{t("New")}</span>
+                      </Button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </form>
           </GlassCard>
 
@@ -531,7 +662,7 @@ const Prediction = () => {
 
 
         {/* OUTPUTS SECTION */}
-        <div className="space-y-6">
+        <div className="space-y-6" ref={outputRef}>
           {predictionResult ? (
             <>
               
@@ -543,21 +674,21 @@ const Prediction = () => {
                 <h2 className="text-2xl font-bold mb-4">{t("Prediction Output")}</h2>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                  <div className="flex justify-center items-center bg-black/20 rounded-xl">
+                  <div className="flex justify-center items-center bg-gradient-to-br from-primary/10 to-transparent border border-primary/20 rounded-xl shadow-inner backdrop-blur-sm">
                       <Plot
                         data={[
                           {
                             type: "indicator",
                             mode: "gauge+number",
                             value: animatedSpoilageProb,
-                            number: { suffix: "%", font: { color: "#ffffff" } },
+                            number: { suffix: "%", font: { color: isDark ? "#ffffff" : "#064e3b" } },
                             gauge: {
-                              axis: { range: [0, 100], tickwidth: 1, tickcolor: "#fff", dtick: 10 },
+                              axis: { range: [0, 100], tickwidth: 1, tickcolor: isDark ? "#ffffff" : "#064e3b", dtick: 10 },
                               bar: { color: predictionResult.risk_level === 'HIGH' ? "#ef4444" : predictionResult.risk_level === 'MEDIUM' ? "#f97316" : "#22c55e" },
-                              bgcolor: "rgba(255,255,255,0.1)",
+                              bgcolor: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
                               borderwidth: 0,
                             },
-                            title: { text: "Spoilage Probability", font: { color: "#ffffff", size: 16 } }
+                            title: { text: "Spoilage Probability", font: { color: isDark ? "#ffffff" : "#064e3b", size: 16 } }
                           }
                         ]}
                         layout={{
@@ -565,7 +696,7 @@ const Prediction = () => {
                           height: 250,
                           margin: { t: 40, b: 20, l: 35, r: 35 },
                           paper_bgcolor: "rgba(0,0,0,0)",
-                          font: { color: "#ffffff" }
+                          font: { color: isDark ? "#ffffff" : "#1f2937" }
                         }}
                         config={{ displayModeBar: false }}
                       />
@@ -591,18 +722,18 @@ const Prediction = () => {
                 </div>
 
                 {/* AI Audio Advisory */}
-                <div className="bg-primary/10 border border-primary/20 rounded-xl p-4 mt-4">
+                <div className="bg-gradient-to-r from-gray-100 to-green-50 dark:from-gray-900 dark:to-green-900/20 border border-green-200 dark:border-green-900/50 rounded-xl p-4 mt-4 shadow-sm">
                   <div className="flex justify-between items-center mb-3">
-                    <h3 className="font-semibold text-primary flex items-center gap-2">
+                    <h3 className="font-semibold text-green-700 dark:text-primary flex items-center gap-2">
                       <Volume2 size={18} /> GenAI Dynamic Advisory
                     </h3>
                     <div className="flex gap-2">
-                      <button onClick={() => handleLangSwitch('en')} className={`px-3 py-1 rounded text-xs font-semibold ${activeLang === 'en' ? 'bg-primary text-white' : 'bg-white/10 text-text-muted'}`}>English</button>
-                      <button onClick={() => handleLangSwitch('kn')} className={`px-3 py-1 rounded text-xs font-semibold ${activeLang === 'kn' ? 'bg-primary text-white' : 'bg-white/10 text-text-muted'}`}>Kannada</button>
+                      <button onClick={() => handleLangSwitch('en')} className={`px-3 py-1 rounded text-xs font-semibold ${activeLang === 'en' ? 'bg-primary text-white shadow-md' : 'bg-gray-200 dark:bg-white/10 text-gray-600 dark:text-text-muted hover:bg-gray-300 dark:hover:bg-white/20'}`}>English</button>
+                      <button onClick={() => handleLangSwitch('kn')} className={`px-3 py-1 rounded text-xs font-semibold ${activeLang === 'kn' ? 'bg-primary text-white shadow-md' : 'bg-gray-200 dark:bg-white/10 text-gray-600 dark:text-text-muted hover:bg-gray-300 dark:hover:bg-white/20'}`}>Kannada</button>
                     </div>
                   </div>
                   
-                  <p className="text-sm text-text-muted mb-4 italic p-3 bg-black/20 rounded-lg border border-white/5 whitespace-pre-wrap">
+                  <p className="text-sm text-green-900 dark:text-green-50 mb-4 italic p-3 bg-green-100/70 dark:bg-green-900/40 rounded-lg border border-green-300 dark:border-green-700/50 whitespace-pre-wrap shadow-inner">
                     {activeLang === 'kn' ? predictionResult.advisory_transcript_kn : predictionResult.advisory_transcript_en}
                   </p>
                   
