@@ -1,8 +1,23 @@
+import os
 import numpy as np
 from PIL import Image
-import tensorflow as tf
-from tensorflow.keras.models import load_model
-from tensorflow.keras.layers import Dense
+
+# Robust Keras import: try tf.keras (TF 2.x built-in), then tf_keras shim, then standalone keras
+try:
+    import tensorflow as tf
+    from tensorflow.keras.models import load_model
+    from tensorflow.keras.layers import Dense
+    _keras_source = "tensorflow.keras"
+except (ImportError, AttributeError):
+    try:
+        import tf_keras
+        from tf_keras.models import load_model
+        from tf_keras.layers import Dense
+        _keras_source = "tf_keras"
+    except ImportError:
+        from keras.models import load_model
+        from keras.layers import Dense
+        _keras_source = "keras"
 
 # Monkey-patch Dense.from_config to strip quantization_config (Keras 2 artifact)
 original_from_config = Dense.from_config
@@ -10,11 +25,12 @@ original_from_config = Dense.from_config
 def custom_from_config(cls, config):
     config.pop('quantization_config', None)
     return original_from_config.__get__(None, cls)(config)
-
 Dense.from_config = custom_from_config
 
-# Load model only once when the app starts
-model = load_model("models/vegetable_quality_v5_model.keras", compile=False)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+model_path = os.path.join(BASE_DIR, "models", "vegetable_quality_v5_model.keras")
+model = load_model(model_path, compile=False)
+
 
 # Keras models do not store string labels. If the model outputs 8 classes, we define 8 temporary labels.
 # The user can update these 8 labels to match the exact crops they trained on.

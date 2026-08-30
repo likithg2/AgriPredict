@@ -12,7 +12,7 @@ from sqlalchemy import or_
 from backend.schemas import (
     UserCreate, UserLogin, UserUpdate, UserResponse, Token,
     OTPRequest, OTPVerifyLogin, ForgotPasswordRequest, ResetPasswordRequest,
-    RegisterOTPRequest
+    RegisterOTPRequest, EmailChangeRequest, EmailChangeVerify
 )
 from backend.auth import (
     hash_password, verify_password, create_access_token, get_current_user,
@@ -21,6 +21,7 @@ from backend.auth import (
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 PENDING_REGISTRATION_OTPS = {}
+PENDING_EMAIL_CHANGES = {}
 
 @router.post("/register-otp")
 def send_register_otp(payload: RegisterOTPRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -79,6 +80,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
         password_hash=hash_password(payload.password),
         role=UserRole(payload.role),
         district=payload.district,
+        managed_warehouse_id=payload.managed_warehouse_id if payload.role == "warehouse_manager" else None,
     )
     db.add(user)
     db.commit()
@@ -256,10 +258,60 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
     return {"message": "Password updated successfully. You can now log in."}
 
 
+@router.post("/request-email-otp")
+def request_email_otp(payload: EmailChangeRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Send OTP for email change."""
+    existing = db.query(User).filter(User.email == payload.new_email).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already in use.",
+        )
+    otp = generate_otp()
+    expires = datetime.utcnow() + timedelta(minutes=10)
+    PENDING_EMAIL_CHANGES[current_user.id] = {"new_email": payload.new_email, "otp": otp, "expires": expires}
+    
+    background_tasks.add_task(send_email_otp, payload.new_email, otp)
+    return {"message": f"OTP sent to {payload.new_email}."}
+
+
+@router.post("/verify-email-otp", response_model=UserResponse)
+def verify_email_otp(payload: EmailChangeVerify, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Verify OTP and update email."""
+    stored = PENDING_EMAIL_CHANGES.get(current_user.id)
+    if not stored or stored["new_email"] != payload.new_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No pending email change for this address.")
+    if stored["otp"] != payload.otp:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid OTP.")
+    if datetime.utcnow() > stored["expires"]:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="OTP expired.")
+        
+    current_user.email = payload.new_email
+    db.commit()
+    db.refresh(current_user)
+    del PENDING_EMAIL_CHANGES[current_user.id]
+    
+    return UserResponse.model_validate(current_user)
+
+
 @router.get("/me", response_model=UserResponse)
 def get_profile(current_user: User = Depends(get_current_user)):
     """Get the current user's profile."""
     return UserResponse.model_validate(current_user)
+
+@router.delete("/me", status_code=status.HTTP_200_OK)
+def delete_account(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Delete the current user's account and all associated data."""
+    # Delete associated data to prevent foreign key constraint failures
+    from backend.models import Prediction, Shipment, Notification
+    db.query(Prediction).filter(Prediction.user_id == current_user.id).delete()
+    db.query(Shipment).filter(Shipment.user_id == current_user.id).delete()
+    db.query(Notification).filter(Notification.user_id == current_user.id).delete()
+    
+    # Finally, delete the user
+    db.delete(current_user)
+    db.commit()
+    return {"message": "Account successfully deleted."}
 
 
 @router.put("/me", response_model=UserResponse)

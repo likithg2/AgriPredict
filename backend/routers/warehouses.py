@@ -5,6 +5,7 @@ Facility listing, updates, gate inspection, dispatch.
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from backend.database import get_db
 from backend.models import (
@@ -114,6 +115,19 @@ def gate_inspection(
                 f"Remaining shelf life: {shipment.shelf_days_calculated:.1f} days.",
     )
     db.add(notif)
+    
+    # Notify warehouse manager/admin for audit
+    if current_user.id != shipment.user_id:
+        mgr_notif = Notification(
+            user_id=current_user.id,
+            shipment_id=shipment.id,
+            type=NotificationType.arrival_alert,
+            title=f"Inspection Complete: {shipment.booking_id}",
+            message=f"You inspected & stored batch {shipment.booking_id} ({shipment.crop}, "
+                    f"{shipment.tonnage} tons) at {warehouse.facility_name}. Quality: {new_risk}.",
+        )
+        db.add(mgr_notif)
+
     db.commit()
 
     farmer = db.query(User).filter(User.id == shipment.user_id).first()
@@ -201,3 +215,24 @@ def dispatch_shipment(
         "message": f"Shipment {shipment.booking_id} dispatched successfully.",
         "status": new_status.value,
     }
+
+
+class SimulateFaultRequest(BaseModel):
+    simulate: bool
+
+@router.post("/{warehouse_id}/simulate-fault")
+def simulate_fault(warehouse_id: int, req: SimulateFaultRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role.value not in ["warehouse_manager", "admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
+    warehouse = db.query(ColdStorage).filter(ColdStorage.id == warehouse_id).first()
+    if not warehouse:
+        raise HTTPException(status_code=404, detail="Warehouse not found")
+        
+    if req.simulate:
+        warehouse.base_temp_c = 14.5
+    else:
+        warehouse.base_temp_c = 4.0
+        
+    db.commit()
+    return {"message": "Fault simulated" if req.simulate else "Fault resolved", "base_temp_c": warehouse.base_temp_c}

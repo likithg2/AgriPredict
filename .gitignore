@@ -5,3 +5,11 @@ __pycache__/
 .env
 .translation_cache.json
 .session_cache.json
+*.db
+scratch/
+test.jpg
+test.mp3
+test_chat.py
+*.keras
+assets/uploads/
+node_modules/

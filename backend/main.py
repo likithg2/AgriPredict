@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.database import engine, Base
-from backend.routers import auth, predictions, shipments, warehouses, farmers, notifications
+from backend.routers import auth, predictions, shipments, warehouses, farmers, notifications, ai
 
 # ── Create all database tables on startup ─────────────────────────────────────
 Base.metadata.create_all(bind=engine)
@@ -40,6 +40,7 @@ app.include_router(shipments.router)
 app.include_router(warehouses.router)
 app.include_router(farmers.router)
 app.include_router(notifications.router)
+app.include_router(ai.router)
 
 
 # ── Health Check ──────────────────────────────────────────────────────────────

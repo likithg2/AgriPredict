@@ -43,19 +43,21 @@ def create_shipment(
             status=ShipmentStatus.in_transit,
             farmer_name=payload.farmer_name or current_user.full_name,
             farmer_phone=payload.farmer_phone or current_user.phone,
+            vehicle_reg_number=payload.vehicle_reg_number,
         )
         db.add(shipment)
         db.commit()
         db.refresh(shipment)
 
         # Create a booking confirmed notification
+        veh_str = f" (Vehicle: {payload.vehicle_reg_number})" if payload.vehicle_reg_number else ""
         notif = Notification(
             user_id=current_user.id,
             shipment_id=shipment.id,
             type=NotificationType.booking_confirmed,
             title="Booking Confirmed",
             message=f"Shipment {shipment.booking_id} for {shipment.tonnage} tons of {shipment.crop} "
-                    f"has been dispatched to {shipment.destination}. ETA: {shipment.eta_hours}.",
+                    f"has been dispatched to {shipment.destination}{veh_str}. ETA: {shipment.eta_hours}.",
         )
         db.add(notif)
         db.commit()

@@ -56,6 +56,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     role = Column(SAEnum(UserRole), default=UserRole.farmer, nullable=False)
     district = Column(String(100), nullable=True)
+    managed_warehouse_id = Column(Integer, ForeignKey("cold_storages.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     otp_code = Column(String(10), nullable=True)
     otp_expires_at = Column(DateTime(timezone=True), nullable=True)
@@ -98,6 +99,12 @@ class Prediction(Base):
     recommended_facility = Column(String(200), nullable=True)
     facility_distance_km = Column(Float, nullable=True)
     mandi_price_per_kg = Column(Float, nullable=True)
+
+    # Added coordinates for map
+    f_lat = Column(Float, nullable=True)
+    f_lng = Column(Float, nullable=True)
+    cs_lat = Column(Float, nullable=True)
+    cs_lng = Column(Float, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

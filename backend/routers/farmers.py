@@ -44,6 +44,10 @@ def farmer_dashboard(
         Shipment.user_id == current_user.id
     ).scalar() or 0.0
 
+    total_cost_saved = db.query(sql_func.sum(Prediction.financial_loss)).filter(
+        Prediction.user_id == current_user.id
+    ).scalar() or 0.0
+
     # Active shipments
     active_shipments = db.query(Shipment).filter(
         Shipment.user_id == current_user.id,
@@ -68,6 +72,7 @@ def farmer_dashboard(
         total_shipments=total_shipments,
         total_tons_shipped=float(total_tons),
         avg_spoilage_rate=float(avg_spoilage) * 100,
+        total_cost_saved=float(total_cost_saved),
         active_shipments=[ShipmentResponse.model_validate(s) for s in active_shipments],
         recent_predictions=[PredictionResponse.model_validate(p) for p in recent_predictions],
     )

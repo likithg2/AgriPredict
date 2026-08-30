@@ -49,6 +49,16 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     phone: Optional[str] = None
     district: Optional[str] = None
+    email: Optional[EmailStr] = None
+
+
+class EmailChangeRequest(BaseModel):
+    new_email: EmailStr
+
+
+class EmailChangeVerify(BaseModel):
+    new_email: EmailStr
+    otp: str
 
 
 class UserResponse(BaseModel):
@@ -58,6 +68,7 @@ class UserResponse(BaseModel):
     email: str
     role: str
     district: Optional[str]
+    managed_warehouse_id: Optional[int]
     created_at: datetime
 
     class Config:
@@ -90,6 +101,17 @@ class PredictionCreate(BaseModel):
 
 
 
+class FacilityRecommendation(BaseModel):
+    facility_name: str
+    district: str
+    latitude: float
+    longitude: float
+    physical_distance_km: float
+    capacity_mt: float
+    available_capacity_tons: float
+    mandi_price_per_kg: float
+    net_estimated_payout: float
+    
 class PredictionResponse(BaseModel):
     id: int
     crop: str
@@ -109,7 +131,14 @@ class PredictionResponse(BaseModel):
     recommended_facility: Optional[str]
     facility_distance_km: Optional[float]
     mandi_price_per_kg: Optional[float]
+    f_lat: Optional[float] = None
+    f_lng: Optional[float] = None
+    cs_lat: Optional[float] = None
+    cs_lng: Optional[float] = None
     image_data: Optional[str] = None
+    top_facilities: List[FacilityRecommendation] = []
+    advisory_transcript_en: Optional[str] = None
+    advisory_transcript_kn: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -138,6 +167,7 @@ class ShipmentCreate(BaseModel):
     shelf_days_calculated: float
     farmer_name: Optional[str] = None
     farmer_phone: Optional[str] = None
+    vehicle_reg_number: Optional[str] = None
 
 
 class ShipmentUpdate(BaseModel):
@@ -208,6 +238,7 @@ class InspectionForm(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 class NotificationResponse(BaseModel):
     id: int
+    shipment_id: Optional[int] = None
     type: str
     title: str
     message: str
@@ -231,6 +262,7 @@ class FarmerDashboardResponse(BaseModel):
     total_shipments: int
     total_tons_shipped: float
     avg_spoilage_rate: float
+    total_cost_saved: float
     active_shipments: List[ShipmentResponse]
     recent_predictions: List[PredictionResponse]
 

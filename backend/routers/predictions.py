@@ -4,11 +4,14 @@ Run spoilage predictions and view history.
 """
 
 import math
+from pydantic import BaseModel
 from pathlib import Path
 
 import numpy as np
 import joblib
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile, Form
+from fastapi.responses import StreamingResponse
+import io
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sql_func
 
@@ -16,6 +19,8 @@ from backend.database import get_db
 from backend.models import Prediction, User, ColdStorage
 from backend.schemas import PredictionCreate, PredictionResponse, PredictionListResponse
 from backend.auth import get_current_user
+from backend.config import settings
+import requests
 
 router = APIRouter(prefix="/api/predictions", tags=["Predictions"])
 
@@ -86,25 +91,80 @@ def haversine(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def _find_nearest_facility(f_lat: float, f_lng: float, db: Session):
-    """Find the nearest cold storage facility with available capacity."""
+def _get_top_3_facilities(f_lat: float, f_lng: float, db: Session, crop: str, qty_tons: float, road_cond: str):
+    """Find top 3 cold storage facilities based on available capacity and net payout."""
     storages = db.query(ColdStorage).filter(
-        ColdStorage.occupancy_pct < 95.0,
+        ColdStorage.occupancy_pct < 100.0,
         ColdStorage.operational_status == "Active",
     ).all()
 
     if not storages:
-        return None, 0.0
+        return []
 
-    best = None
-    best_dist = float("inf")
+    speed_map = {"National Highway": 60.0, "State Highway": 40.0, "Rural / Unpaved Road": 20.0}
+    current_speed = speed_map.get(road_cond, 40.0)
+
+    fallback_map = {
+        "Bagalkot": 26.50, "Gadag": 24.20, "Koppal": 23.80, "Kolar": 30.00,
+        "Belagavi": 24.00, "Shivamogga": 28.00, "Chitradurga": 22.00,
+        "Haveri": 25.00, "Mysuru": 32.00, "Bengaluru Urban": 35.00,
+        "Bengaluru Rural": 33.00, "Dharwad": 29.00, "Tumakuru": 28.50
+    }
+
+    candidates = []
     for s in storages:
-        d = haversine(f_lat, f_lng, s.latitude, s.longitude)
-        if d < best_dist:
-            best_dist = d
-            best = s
+        available_cap = s.capacity_mt * (1 - s.occupancy_pct / 100.0)
+        if available_cap >= qty_tons:
+            dist_km = haversine(f_lat, f_lng, s.latitude, s.longitude)
+            
+            mandi_price = fallback_map.get(s.district, 25.00)
+            
+            est_transit_hours = dist_km / current_speed if current_speed > 0 else dist_km / 40.0
+            total_shelf_hours = CROP_MASTER.get(crop, (7,))[0] * 24.0
+            survival_prob = max(0.0, min(1.0, total_shelf_hours / (total_shelf_hours + est_transit_hours)))
+            
+            total_transit_cost = dist_km * 25.0
+            storage_rent_cost = 180.0 * qty_tons * 3
+            total_kg = qty_tons * 1000.0
+            net_payout = (total_kg * mandi_price * survival_prob) - total_transit_cost - storage_rent_cost
+            
+            candidates.append({
+                "facility_name": s.facility_name,
+                "district": s.district,
+                "latitude": s.latitude,
+                "longitude": s.longitude,
+                "physical_distance_km": dist_km,
+                "capacity_mt": s.capacity_mt,
+                "available_capacity_tons": available_cap,
+                "mandi_price_per_kg": mandi_price,
+                "price_per_ton_day": s.price_per_ton_day,
+                "net_estimated_payout": net_payout,
+            })
 
-    return best, best_dist
+    # Sort by physical distance ascending, then net payout descending
+    candidates.sort(key=lambda x: (x["physical_distance_km"], -x["net_estimated_payout"]))
+    return candidates[:3]
+
+
+@router.get("/weather")
+def get_weather(district: str):
+    f_lat, f_lng = DISTRICT_COORDS.get(district, (12.97, 77.59))
+    url = f"https://api.openweathermap.org/data/2.5/weather?lat={f_lat}&lon={f_lng}&units=metric&appid={settings.WEATHER_API_KEY}"
+    try:
+        res = requests.get(url, timeout=10).json()
+        if res.get("cod") == 200:
+            return {
+                "temp": float(res["main"]["temp"]),
+                "humidity": float(res["main"]["humidity"]),
+                "wind": float(res.get("wind", {}).get("speed", 0.0)) * 3.6,
+                "rain": float(res.get("rain", {}).get("1h", res.get("rain", {}).get("3h", 0.0))),
+                "clouds": int(res.get("clouds", {}).get("all", 0)),
+                "desc": res.get("weather", [{}])[0].get("description", "N/A").title(),
+                "status": "success"
+            }
+        return {"temp": 25.0, "humidity": 60.0, "wind": 8.0, "rain": 0.0, "clouds": 40, "desc": "API Error", "status": "error"}
+    except Exception:
+        return {"temp": 25.0, "humidity": 60.0, "wind": 8.0, "rain": 0.0, "clouds": 40, "desc": "API Error", "status": "error"}
 
 
 @router.post("/", response_model=PredictionResponse, status_code=201)
@@ -127,10 +187,14 @@ def create_prediction(
 
     f_lat, f_lng = DISTRICT_COORDS[payload.district]
 
-    # Find nearest facility
-    facility, dist_km = _find_nearest_facility(f_lat, f_lng, db)
-    facility_name = facility.facility_name if facility else "Unknown"
-    mandi_price = 25.0  # fallback
+    # Find top facilities
+    top_facilities_dicts = _get_top_3_facilities(f_lat, f_lng, db, payload.crop, payload.quantity_tons, payload.road_condition)
+    
+    facility_name = top_facilities_dicts[0]["facility_name"] if top_facilities_dicts else "Unknown"
+    dist_km = top_facilities_dicts[0]["physical_distance_km"] if top_facilities_dicts else 0.0
+    mandi_price = top_facilities_dicts[0]["mandi_price_per_kg"] if top_facilities_dicts else 25.0
+    cs_lat = top_facilities_dicts[0]["latitude"] if top_facilities_dicts else None
+    cs_lng = top_facilities_dicts[0]["longitude"] if top_facilities_dicts else None
 
     # Compute derived features (same logic as the Streamlit page)
     from datetime import datetime
@@ -207,12 +271,71 @@ def create_prediction(
         recommended_facility=facility_name,
         facility_distance_km=dist_km,
         mandi_price_per_kg=mandi_price,
+        f_lat=f_lat,
+        f_lng=f_lng,
+        cs_lat=cs_lat,
+        cs_lng=cs_lng,
     )
     db.add(prediction)
     db.commit()
     db.refresh(prediction)
 
-    return PredictionResponse.model_validate(prediction)
+    # Convert prediction to dict and add top_facilities and mock transcripts
+    resp_data = PredictionResponse.model_validate(prediction).model_dump()
+    resp_data["top_facilities"] = top_facilities_dicts
+    
+    # Generate generic advisory text if Gemini is not hooked up here
+    en_text = (
+        f"Post-Harvest AI Advisory for {payload.crop}\n\n"
+        f"Based on our predictive matrix, your {payload.crop} shipment faces a {risk_level} risk of spoilage, "
+        f"with an estimated volume loss of {loss_val:.1f}%.\n\n"
+        f"Critical Risk Factors:\n"
+        f"- Logistics Delay: Actual transit of {payload.actual_transit_days} days exceeds the ideal {payload.expected_transit_days} days.\n"
+        f"- Climate Stress: Exposure to {payload.temperature}°C and {payload.humidity}% humidity accelerates degradation.\n"
+        f"- Vibration Damage: {payload.road_condition} contributes significantly to mechanical damage during transport.\n\n"
+        f"Immediate Recommendation:\n"
+        f"Route your shipment to {facility_name} ({dist_km:.1f} km away). "
+        f"Booking this slot will stabilize temperatures and extend shelf life by up to {shelf_val:.1f} days, minimizing financial loss."
+    )
+    
+    kn_crop_map = {
+        "Tomato": "ಟೊಮೆಟೊ",
+        "Onion": "ಈರುಳ್ಳಿ",
+        "Cucumber": "ಸೌತೆಕಾಯಿ",
+        "Potato": "ಆಲೂಗಡ್ಡೆ"
+    }
+    kn_risk_map = {
+        "HIGH": "ಅತಿ ಹೆಚ್ಚು",
+        "MEDIUM": "ಮಧ್ಯಮ",
+        "LOW": "ಕಡಿಮೆ"
+    }
+    kn_road_map = {
+        "National Highway": "ರಾಷ್ಟ್ರೀಯ ಹೆದ್ದಾರಿ",
+        "State Highway": "ರಾಜ್ಯ ಹೆದ್ದಾರಿ",
+        "Rural / Unpaved Road": "ಗ್ರಾಮೀಣ / ಕಚ್ಚಾ ರಸ್ತೆ"
+    }
+    
+    kn_crop = kn_crop_map.get(payload.crop, payload.crop)
+    kn_risk = kn_risk_map.get(risk_level, risk_level)
+    kn_road = kn_road_map.get(payload.road_condition, payload.road_condition)
+    
+    kn_text = (
+        f"{kn_crop} ಬೆಳೆಗಾಗಿ ಎಐ ಆಧಾರಿತ ಸಲಹೆ\n\n"
+        f"ನಮ್ಮ ವಿಶ್ಲೇಷಣೆಯ ಪ್ರಕಾರ, ನಿಮ್ಮ {kn_crop} ಬೆಳೆಯು {kn_risk} ಕೊಳೆಯುವ ಅಪಾಯದಲ್ಲಿದೆ ಮತ್ತು "
+        f"ಅಂದಾಜು {loss_val:.1f}% ನಷ್ಟ ಉಂಟಾಗುವ ಸಾಧ್ಯತೆ ಇದೆ.\n\n"
+        f"ಮುಖ್ಯ ಕಾರಣಗಳು:\n"
+        f"- ಸಾರಿಗೆ ವಿಳಂಬ: ನಿರೀಕ್ಷಿತ {payload.expected_transit_days} ದಿನಗಳ ಬದಲಿಗೆ {payload.actual_transit_days} ದಿನಗಳ ಸಾಗಾಟ.\n"
+        f"- ಹವಾಮಾನ ಪ್ರಭಾವ: {payload.temperature}°C ಉಷ್ಣಾಂಶ ಮತ್ತು {payload.humidity}% ಆರ್ದ್ರತೆ ಬೆಳೆ ಹಾಳಾಗುವಿಕೆಯನ್ನು ವೇಗಗೊಳಿಸುತ್ತದೆ.\n"
+        f"- ರಸ್ತೆ ಹಾನಿ: {kn_road} ರಸ್ತೆಯಲ್ಲಿನ ಕಂಪನಗಳಿಂದ ಯಾಂತ್ರಿಕ ಹಾನಿ ಉಂಟಾಗುತ್ತದೆ.\n\n"
+        f"ತ್ವರಿತ ಶಿಫಾರಸು:\n"
+        f"ನಿಮ್ಮ ಬೆಳೆಯನ್ನು ತಕ್ಷಣವೇ {facility_name} ({dist_km:.1f} km ದೂರದಲ್ಲಿದೆ) ಗೆ ಕಳುಹಿಸಿ. "
+        f"ಇಲ್ಲಿ ತಾಪಮಾನ ನಿಯಂತ್ರಣದಿಂದ ಬೆಳೆಯ ಜೀವಿತಾವಧಿ {shelf_val:.1f} ದಿನಗಳವರೆಗೆ ಹೆಚ್ಚಾಗುತ್ತದೆ."
+    )
+    
+    resp_data["advisory_transcript_en"] = en_text
+    resp_data["advisory_transcript_kn"] = kn_text
+
+    return resp_data
 
 
 @router.get("/", response_model=PredictionListResponse)
@@ -264,3 +387,125 @@ def get_prediction(
         raise HTTPException(status_code=404, detail="Prediction not found.")
 
     return PredictionResponse.model_validate(prediction)
+
+
+@router.post("/analyze-image")
+async def analyze_image(file: UploadFile = File(...)):
+    try:
+        import subprocess
+        import json
+        import tempfile
+        import os
+        
+        # Save uploaded file to a temporary file
+        contents = await file.read()
+        fd, temp_path = tempfile.mkstemp(suffix=".jpg")
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                f.write(contents)
+                
+            # Run the predictor using the system Python which has a working TensorFlow
+            system_python = r"C:\Users\thear\AppData\Local\Programs\Python\Python310\python.exe"
+            script_path = os.path.join(BASE_DIR, "utils", "run_predictor.py")
+            
+            result = subprocess.run(
+                [system_python, script_path, temp_path],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            if result.returncode != 0:
+                raise Exception(f"Subprocess failed with code {result.returncode}: {result.stderr}")
+                
+            try:
+                # Find the last line of stdout that looks like JSON in case TF spits out logs
+                lines = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+                json_str = None
+                for line in reversed(lines):
+                    if line.startswith('{') and line.endswith('}'):
+                        json_str = line
+                        break
+                        
+                if not json_str:
+                    raise Exception(f"No JSON output found in stdout: {result.stdout}")
+                    
+                data = json.loads(json_str)
+                if "error" in data:
+                    raise Exception(data["error"])
+                    
+                return data
+            except json.JSONDecodeError:
+                raise Exception(f"Failed to parse JSON output: {result.stdout}")
+        finally:
+            # Clean up temp file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Image analysis failed: {str(e)}")
+
+@router.post("/voice-parse")
+async def parse_voice(file: UploadFile = File(...)):
+    import speech_recognition as sr
+    import io
+    recognizer = sr.Recognizer()
+    try:
+        contents = await file.read()
+        wav_buffer = io.BytesIO(contents)
+        with sr.AudioFile(wav_buffer) as source:
+            recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            audio_data = recognizer.record(source)
+        transcribed_text = recognizer.recognize_google(audio_data)
+        
+        tt_lower = transcribed_text.lower().replace("bangalore", "bengaluru")
+        
+        extracted_crop = None
+        for c in CROP_MASTER.keys():
+            if c.lower() in tt_lower:
+                extracted_crop = c
+                break
+                
+        extracted_district = None
+        for d in DISTRICT_COORDS.keys():
+            if d.lower() in tt_lower or d.lower().split()[0] in tt_lower.split():
+                extracted_district = d
+                break
+                
+        extracted_qty = None
+        for w in transcribed_text.split():
+            if w.replace(".", "", 1).isdigit():
+                extracted_qty = float(w)
+                break
+                
+        return {
+            "text": transcribed_text,
+            "crop": extracted_crop,
+            "district": extracted_district,
+            "quantity": extracted_qty
+        }
+    except sr.UnknownValueError:
+        raise HTTPException(status_code=400, detail="Could not understand audio")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class AdvisoryRequest(BaseModel):
+    lang: str
+    text: str
+
+@router.post("/advisory-audio")
+async def advisory_audio(req: AdvisoryRequest):
+    import io
+    from gtts import gTTS
+    
+    text = req.text
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+        
+    try:
+        tts = gTTS(text=text, lang=req.lang, slow=False)
+        audio_buf = io.BytesIO()
+        tts.write_to_fp(audio_buf)
+        audio_buf.seek(0)
+        return StreamingResponse(audio_buf, media_type="audio/mp3")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
