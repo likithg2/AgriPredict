@@ -80,5 +80,7 @@ export default api;
 
 export const aiAPI = {
   getSuggestions: (district, language) => api.get('/ai/suggestions', { params: { district, language } }),
-  chat: (messages, language) => api.post('/ai/chat', { messages, language })
+  chat: (messages, language, session_id) => api.post('/ai/chat', { messages, language, session_id }),
+  getSessions: () => api.get('/ai/sessions'),
+  getSessionMessages: (sessionId) => api.get(`/ai/sessions/${sessionId}`)
 };

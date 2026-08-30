@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, X, Send, Bot, User, Loader2 } from 'lucide-react';
+import { MessageSquare, X, Send, Bot, Menu, Plus, Clock } from 'lucide-react';
 import { LanguageContext } from '../context/LanguageContext';
 import { aiAPI } from '../utils/api';
 
@@ -9,9 +9,50 @@ const ChatWidget = () => {
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  
+  // History states
+  const [sessions, setSessions] = useState([]);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  
   const messagesEndRef = useRef(null);
   
   const { t, language } = useContext(LanguageContext);
+
+  const fetchSessions = async () => {
+    try {
+      const res = await aiAPI.getSessions();
+      setSessions(res.data);
+    } catch (err) {
+      console.error("Failed to fetch sessions", err);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchSessions();
+    }
+  }, [isOpen]);
+
+  const loadSession = async (sessionId) => {
+    try {
+      setIsLoading(true);
+      const res = await aiAPI.getSessionMessages(sessionId);
+      setMessages(res.data);
+      setCurrentSessionId(sessionId);
+      setIsSidebarOpen(false);
+    } catch (err) {
+      console.error("Failed to load session", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const startNewChat = () => {
+    setMessages([]);
+    setCurrentSessionId(null);
+    setIsSidebarOpen(false);
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -37,7 +78,12 @@ const ChatWidget = () => {
         content: msg.content
       }));
       
-      const res = await aiAPI.chat(chatHistory, language);
+      const res = await aiAPI.chat(chatHistory, language, currentSessionId);
+      
+      if (res.data.session_id && !currentSessionId) {
+        setCurrentSessionId(res.data.session_id);
+        fetchSessions(); // Refresh history list
+      }
       
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -83,8 +129,11 @@ const ChatWidget = () => {
               className="absolute bottom-0 right-0 w-[350px] sm:w-[400px] h-[500px] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
             >
               {/* Header */}
-              <div className="bg-primary/10 border-b border-white/10 p-4 flex items-center justify-between">
+              <div className="bg-primary/10 border-b border-white/10 p-4 flex items-center justify-between z-20">
                 <div className="flex items-center gap-3">
+                  <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-1 hover:bg-white/10 rounded-md transition-colors text-white">
+                    <Menu className="w-5 h-5" />
+                  </button>
                   <div className="bg-primary/20 p-2 rounded-full">
                     <Bot className="w-5 h-5 text-primary" />
                   </div>
@@ -101,43 +150,93 @@ const ChatWidget = () => {
                 </button>
               </div>
 
-              {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {messages.length === 0 && (
-                  <div className="text-center text-text-muted mt-8">
-                    <Bot className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                    <p>Hello! I am your Post-Harvest AI Assistant.</p>
-                    <p className="text-sm mt-1">How can I help you today?</p>
-                  </div>
-                )}
-                
-                {messages.map((msg, idx) => (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    key={idx}
-                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div className={`max-w-[80%] rounded-2xl p-3 ${
-                      msg.role === 'user' 
-                        ? 'bg-primary text-black rounded-br-none' 
-                        : 'bg-white/10 text-white rounded-bl-none'
-                    }`}>
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+              {/* Main Body (Relative for Sidebar overlay) */}
+              <div className="flex-1 relative flex flex-col overflow-hidden">
+                {/* Sidebar Overlay */}
+                <AnimatePresence>
+                  {isSidebarOpen && (
+                    <motion.div
+                      initial={{ x: '-100%' }}
+                      animate={{ x: 0 }}
+                      exit={{ x: '-100%' }}
+                      transition={{ type: 'tween', duration: 0.2 }}
+                      className="absolute inset-y-0 left-0 w-3/4 max-w-[250px] bg-black/95 border-r border-white/10 z-10 flex flex-col shadow-2xl"
+                    >
+                      <div className="p-4 border-b border-white/10 flex justify-between items-center">
+                        <h4 className="text-white font-semibold flex items-center gap-2">
+                          <Clock className="w-4 h-4" /> History
+                        </h4>
+                        <button onClick={() => setIsSidebarOpen(false)} className="text-text-muted hover:text-white">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      
+                      <div className="p-3">
+                        <button 
+                          onClick={startNewChat}
+                          className="w-full flex items-center gap-2 bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 rounded-lg p-2.5 transition-colors text-sm font-medium"
+                        >
+                          <Plus className="w-4 h-4" /> New Chat
+                        </button>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto p-3 space-y-1">
+                        {sessions.length === 0 ? (
+                          <p className="text-xs text-text-muted text-center mt-4">No past chats.</p>
+                        ) : (
+                          sessions.map(session => (
+                            <button
+                              key={session.id}
+                              onClick={() => loadSession(session.id)}
+                              className={`w-full text-left p-2.5 rounded-lg text-sm truncate transition-colors ${currentSessionId === session.id ? 'bg-primary text-black font-medium' : 'text-text-muted hover:bg-white/10 hover:text-white'}`}
+                            >
+                              {session.title || 'Chat Session'}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Messages Area */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {messages.length === 0 && (
+                    <div className="text-center text-text-muted mt-8">
+                      <Bot className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                      <p>Hello! I am your Post-Harvest AI Assistant.</p>
+                      <p className="text-sm mt-1">How can I help you today?</p>
                     </div>
-                  </motion.div>
-                ))}
-                
-                {isLoading && (
-                  <div className="flex justify-start">
-                    <div className="bg-white/10 rounded-2xl rounded-bl-none p-4 flex gap-2 items-center">
-                      <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  )}
+                  
+                  {messages.map((msg, idx) => (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      key={idx}
+                      className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div className={`max-w-[80%] rounded-2xl p-3 ${
+                        msg.role === 'user' 
+                          ? 'bg-primary text-black rounded-br-none' 
+                          : 'bg-white/10 text-white rounded-bl-none'
+                      }`}>
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                      </div>
+                    </motion.div>
+                  ))}
+                  
+                  {isLoading && (
+                    <div className="flex justify-start">
+                      <div className="bg-white/10 rounded-2xl rounded-bl-none p-4 flex gap-2 items-center">
+                        <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </div>
                     </div>
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
               </div>
 
               {/* Input Area */}

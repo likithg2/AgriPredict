@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.auth import get_current_user, User
+from backend.models import ChatSession, ChatMessage
 from backend.config import settings
 from backend.routers.predictions import get_weather
 import google.generativeai as genai
@@ -10,13 +11,14 @@ from typing import List, Optional
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
-class ChatMessage(BaseModel):
+class ChatMessageModel(BaseModel):
     role: str
     content: str
 
 class ChatRequest(BaseModel):
-    messages: List[ChatMessage]
+    messages: List[ChatMessageModel]
     language: str = "en"
+    session_id: Optional[int] = None
 
 @router.get("/suggestions")
 def get_crop_suggestions(
@@ -43,6 +45,9 @@ def get_crop_suggestions(
         genai.configure(api_key=settings.GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-flash-lite-latest')
         
+        lang_map = {"EN": "English", "en": "English", "KN": "Kannada", "kn": "Kannada", "HI": "Hindi", "hi": "Hindi"}
+        resolved_lang = lang_map.get(language, "English")
+        
         prompt = f"""
         You are an expert agricultural assistant in India.
         The farmer is located in {district}.
@@ -58,7 +63,7 @@ def get_crop_suggestions(
         3. Use an appropriate emoji for each crop immediately after the number (e.g., "1. 🍅 **Tomato**").
         4. Make the crop names visually distinguishable by using **bold text**.
         5. Keep the response concise and strictly adhere to this format.
-        6. MUST provide the ENTIRE response in the following language: {language}.
+        6. MUST provide the ENTIRE response in the following language: {resolved_lang}.
 
         Example of REQUIRED output format:
         Namaste! Here are 3 profitable crops suited for your area...
@@ -94,6 +99,9 @@ def chat_with_ai(
         genai.configure(api_key=settings.GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-flash-lite-latest')
         
+        lang_map = {"EN": "English", "en": "English", "KN": "Kannada", "kn": "Kannada", "HI": "Hindi", "hi": "Hindi"}
+        resolved_lang = lang_map.get(request.language, "English")
+        
         # Build context from user's dashboard (e.g. active shipments)
         from backend.models import Shipment
         recent_shipments = db.query(Shipment).filter(
@@ -118,7 +126,7 @@ def chat_with_ai(
         
         If they specifically ask about their own shipments or spoilage, use the context above to assist them. Otherwise, answer their general questions confidently using your expert knowledge.
         
-        IMPORTANT: Please respond ONLY in this language code: {request.language} (en=English, kn=Kannada, hi=Hindi).
+        IMPORTANT: Please respond ONLY in {resolved_lang}. Do not use any other language.
         """
         
         # Convert messages to Gemini format
@@ -131,11 +139,51 @@ def chat_with_ai(
             role = 'model' if msg.role == 'assistant' else 'user'
             formatted_messages.append({"role": role, "parts": [msg.content]})
             
+        # Extract the latest user message
+        latest_user_message = request.messages[-1].content if request.messages else "Hello"
+        
+        # Handle session
+        session_id = request.session_id
+        if not session_id:
+            title = latest_user_message[:30] + "..." if len(latest_user_message) > 30 else latest_user_message
+            new_session = ChatSession(user_id=current_user.id, title=title)
+            db.add(new_session)
+            db.commit()
+            db.refresh(new_session)
+            session_id = new_session.id
+            
         # We need to use generate_content with a list of contents for history, 
         # or use start_chat. Let's just pass the messages list.
         response = model.generate_content(formatted_messages)
         
-        return {"response": response.text}
+        # Save user message
+        db.add(ChatMessage(session_id=session_id, role="user", content=latest_user_message))
+        # Save AI response
+        db.add(ChatMessage(session_id=session_id, role="assistant", content=response.text))
+        db.commit()
+        
+        return {"response": response.text, "session_id": session_id}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/sessions")
+def get_chat_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    sessions = db.query(ChatSession).filter(ChatSession.user_id == current_user.id).order_by(ChatSession.updated_at.desc()).all()
+    return [{"id": s.id, "title": s.title, "updated_at": s.updated_at} for s in sessions]
+
+@router.get("/sessions/{session_id}")
+def get_chat_session_messages(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at.asc()).all()
+    return [{"id": m.id, "role": m.role, "content": m.content, "created_at": m.created_at} for m in messages]
