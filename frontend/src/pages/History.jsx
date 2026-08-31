@@ -116,7 +116,7 @@ const History = () => {
   const barValues = barLabels.map(k => lossByCrop[k]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 pb-12 space-y-8">
+    <div className="w-full px-4 sm:px-[2cm] pb-12 space-y-8">
       <div>
         <h1 className="text-3xl font-bold flex items-center gap-2"><HistoryIcon className="text-primary" /> Prediction History</h1>
         <p className="text-text-muted">Complete record of all your crop spoilage analysis runs</p>

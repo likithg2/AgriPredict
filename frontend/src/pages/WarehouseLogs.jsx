@@ -79,7 +79,7 @@ const WarehouseLogs = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-8">
+    <div className="w-full px-4 sm:px-[2cm] py-8">
       <div className="space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <h2 className="text-2xl font-bold flex items-center gap-2">📚 Shipment Logs & History</h2>
@@ -121,7 +121,7 @@ const WarehouseLogs = () => {
         {loading ? (
           <GlassCard className="p-6 text-center text-text-muted">Loading logs...</GlassCard>
         ) : (
-          <GlassCard className="p-4 overflow-x-auto h-[75vh] overflow-y-auto">
+          <GlassCard className="p-4 overflow-x-auto">
             {allShipments.length > 0 ? (
               <table className="w-full text-left text-sm border-collapse whitespace-nowrap">
                 <thead>
