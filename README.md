@@ -18,16 +18,18 @@ The system combines Machine Learning, Deep Learning, weather data, route optimiz
 - 💰 Financial Loss Estimation
 - 🔊 AI-generated Voice Advisory
 - 🌐 Multi-language Support (English & Kannada)
-- 📊 Interactive Dashboard using Streamlit
+- 📊 Interactive Dashboard
 - 🔌 Backend API powered by FastAPI
+- 💻 Modern React Frontend with Tailwind CSS
 
 ---
 
 ## 🧠 Technologies Used
 
 ### Frontend
-- Streamlit
-- HTML / CSS
+- React (Vite)
+- Tailwind CSS
+- JavaScript
 
 ### Backend
 - Python
@@ -67,26 +69,22 @@ PostHarvestLossPrediction/
 │   ├── routers/                # API Endpoints (Auth, Farmers, Predictions, etc.)
 │   └── requirements.txt        # Backend dependencies
 │
+├── frontend/
+│   ├── src/                    # React Frontend Source Code
+│   ├── package.json            # Frontend Node dependencies
+│   ├── tailwind.config.js      # Tailwind CSS configuration
+│   └── vite.config.js          # Vite configuration
+│
 ├── models/
 │   └── vegetable_quality_v5_model.keras # Deep Learning Model
 │
-├── pages/
-│   ├── 0_🔐_Login.py
-│   ├── 1_📊_ML_Prediction.py
-│   ├── 2_🗄️_Warehouse_Manager.py
-│   ├── 3_🧑‍🌾_Dashboard.py
-│   └── 4_📜_Prediction_History.py
-│
 ├── utils/
-│   ├── api_client.py           # Backend Integration Utility
-│   ├── quality_predictor.py    # Image Inference Utility
-│   ├── translator.py           # Multi-language Support
-│   └── ui.py                   # Streamlit UI Components
+│   ├── api_client.py           # API Integration Utility
+│   └── quality_predictor.py    # Image Inference Utility
 │
 ├── *.csv                       # Datasets (Cold Storage, Buyers, Active Shipments)
 ├── artifacts_v2.pkl            # Spoilage Prediction ML Pipeline
-├── requirements.txt            # Frontend Streamlit Dependencies
-└── Home.py                     # Streamlit App Entry Point
+└── requirements.txt            # Python Dependencies
 ```
 
 ---
@@ -130,7 +128,7 @@ Each vegetable contains Fresh and Rotten categories.
    cd PostHarvestLossPrediction
    ```
 
-2. **Create and Activate a Virtual Environment**
+2. **Create and Activate a Virtual Environment for Backend**
    *Windows:*
    ```bash
    python -m venv venv
@@ -142,10 +140,10 @@ Each vegetable contains Fresh and Rotten categories.
    source venv/bin/activate
    ```
 
-3. **Install Dependencies**
+3. **Install Backend Dependencies**
    ```bash
-   pip install -r requirements.txt
    pip install -r backend/requirements.txt
+   pip install -r requirements.txt
    ```
 
 4. **Run the Backend API (FastAPI)**
@@ -155,10 +153,12 @@ Each vegetable contains Fresh and Rotten categories.
    uvicorn main:app --reload
    ```
 
-5. **Run the Frontend (Streamlit)**
-   In another terminal (with the virtual environment activated):
+5. **Install and Run the Frontend (React/Vite)**
+   In another terminal:
    ```bash
-   streamlit run Home.py
+   cd frontend
+   npm install
+   npm run dev
    ```
 
 ---
@@ -175,10 +175,9 @@ Each vegetable contains Fresh and Rotten categories.
 ## 👥 Contributors
 
 - **Likith G**
-- Team Members: Akash, Shubham & Brijesh
 
 ---
 
 ## 📜 License
 
-This project is developed for academic purposes.
+This project is open-source and available under the standard MIT License.
