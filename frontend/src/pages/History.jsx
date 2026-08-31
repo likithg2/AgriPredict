@@ -5,7 +5,6 @@ import { predictionsAPI } from '../utils/api';
 import GlassCard from '../components/GlassCard';
 import Button from '../components/Button';
 import { History as HistoryIcon, ChevronLeft, ChevronRight, Download } from 'lucide-react';
-import Plot from 'react-plotly.js';
 import ImageModal from '../components/ImageModal';
 
 const getCropEmoji = (crop) => {
@@ -92,28 +91,6 @@ const History = () => {
     link.click();
     document.body.removeChild(link);
   };
-
-  // --- Charts Data Prep ---
-  // 1. Spoilage trends (Line Chart)
-  const spx = predictions.map((_, i) => i + 1);
-  const spy = predictions.map(p => p.spoilage_probability * 100);
-  
-  // 2. Risk Distribution (Pie Chart)
-  const riskCounts = { HIGH: 0, MEDIUM: 0, LOW: 0 };
-  predictions.forEach(p => {
-    if (p.risk_level) riskCounts[p.risk_level] = (riskCounts[p.risk_level] || 0) + 1;
-  });
-  const pieLabels = Object.keys(riskCounts).filter(k => riskCounts[k] > 0);
-  const pieValues = pieLabels.map(k => riskCounts[k]);
-  const pieColors = pieLabels.map(k => k === 'HIGH' ? '#ef4444' : k === 'MEDIUM' ? '#f97316' : '#22c55e');
-
-  // 3. Loss by Crop (Bar Chart)
-  const lossByCrop = {};
-  predictions.forEach(p => {
-    lossByCrop[p.crop] = (lossByCrop[p.crop] || 0) + p.financial_loss;
-  });
-  const barLabels = Object.keys(lossByCrop);
-  const barValues = barLabels.map(k => lossByCrop[k]);
 
   return (
     <div className="w-full px-4 sm:px-[2cm] pb-12 space-y-8">
@@ -250,132 +227,6 @@ const History = () => {
         )}
       </GlassCard>
 
-      
-      {/* Charts Section */}
-      {predictions.length >= 2 && (
-        <>
-          <div className="mt-12 mb-6">
-             <h2 className="text-2xl font-bold flex items-center gap-2">
-               <span className="text-primary">📈</span> Analytics Dashboard
-             </h2>
-             <p className="text-text-muted mt-1">Visualize historical trends and identify critical risk vectors across your logistics pipeline.</p>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <GlassCard className="p-1 flex flex-col justify-center overflow-hidden border border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
-              <div className="p-4 pb-0 border-b border-white/5 bg-background/30 rounded-t-xl">
-                 <h3 className="text-lg font-bold text-white mb-1">Spoilage Trend Analysis</h3>
-                 <p className="text-xs text-text-muted mb-3">Probability of spoilage across recent prediction records.</p>
-              </div>
-              <div className="bg-black/10">
-                <Plot
-                  data={[{
-                    x: spx,
-                    y: spy,
-                    type: 'scatter',
-                    mode: 'lines+markers',
-                    marker: { color: '#10b981', size: 6, line: { width: 2, color: '#fff'} },
-                    line: { width: 3, shape: 'spline', color: '#10b981' },
-                    fill: 'tozeroy',
-                    fillcolor: 'rgba(16, 185, 129, 0.1)',
-                    hoverinfo: 'y',
-                    hovertemplate: '%{y:.1f}%<extra></extra>',
-                  }]}
-                  layout={{
-                    xaxis: { title: "Prediction Sequence", color: '#94a3b8', gridcolor: 'rgba(255,255,255,0.05)', zeroline: false },
-                    yaxis: { title: "Spoilage Probability", color: '#94a3b8', gridcolor: 'rgba(255,255,255,0.05)', zeroline: false, ticksuffix: '%' },
-                    paper_bgcolor: 'rgba(0,0,0,0)',
-                    plot_bgcolor: 'rgba(0,0,0,0)',
-                    font: { color: '#ffffff', family: 'Inter, sans-serif' },
-                    margin: { t: 30, b: 50, l: 60, r: 20 },
-                    autosize: true,
-                    hovermode: 'x unified'
-                  }}
-                  useResizeHandler={true}
-                  style={{width: '100%', height: '350px'}}
-                  config={{ displayModeBar: false }}
-                />
-              </div>
-            </GlassCard>
-            
-            <GlassCard className="p-1 flex flex-col justify-center overflow-hidden border border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
-              <div className="p-4 pb-0 border-b border-white/5 bg-background/30 rounded-t-xl">
-                 <h3 className="text-lg font-bold text-white mb-1">Risk Level Distribution</h3>
-                 <p className="text-xs text-text-muted mb-3">Overall breakdown of HIGH, MEDIUM, and LOW risk shipments.</p>
-              </div>
-              <div className="bg-black/10">
-                <Plot
-                  data={[{
-                    labels: pieLabels,
-                    values: pieValues,
-                    type: 'pie',
-                    hole: 0.5,
-                    textinfo: 'label+percent',
-                    textposition: 'outside',
-                    hoverinfo: 'label+value',
-                    hovertemplate: '%{label}<br>Count: %{value}<extra></extra>',
-                    marker: { 
-                      colors: pieColors,
-                      line: { color: 'rgba(255,255,255,0.1)', width: 2 }
-                    }
-                  }]}
-                  layout={{
-                    paper_bgcolor: 'rgba(0,0,0,0)',
-                    plot_bgcolor: 'rgba(0,0,0,0)',
-                    font: { color: '#ffffff', family: 'Inter, sans-serif' },
-                    margin: { t: 40, b: 40, l: 40, r: 40 },
-                    autosize: true,
-                    showlegend: false
-                  }}
-                  useResizeHandler={true}
-                  style={{width: '100%', height: '350px'}}
-                  config={{ displayModeBar: false }}
-                />
-              </div>
-            </GlassCard>
-          </div>
-          
-          {barLabels.length > 0 && (
-            <GlassCard className="mt-6 mb-12 p-1 flex flex-col justify-center overflow-hidden border border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
-              <div className="p-4 pb-0 border-b border-white/5 bg-background/30 rounded-t-xl">
-                 <h3 className="text-lg font-bold text-white mb-1">Total Financial Exposure by Crop</h3>
-                 <p className="text-xs text-text-muted mb-3">Cumulative estimated financial loss segmented by crop type.</p>
-              </div>
-              <div className="bg-black/10">
-                <Plot
-                  data={[{
-                    x: barLabels,
-                    y: barValues,
-                    type: 'bar',
-                    text: barValues.map(v => '₹' + v.toLocaleString()),
-                    textposition: 'auto',
-                    hoverinfo: 'x+y',
-                    hovertemplate: '%{x}<br>Loss: ₹%{y:,.0f}<extra></extra>',
-                    marker: { 
-                      color: barValues, 
-                      colorscale: 'YlOrRd', 
-                      showscale: false,
-                      line: { width: 1, color: 'rgba(255,255,255,0.2)' }
-                    }
-                  }]}
-                  layout={{
-                    xaxis: { color: '#94a3b8', gridcolor: 'rgba(255,255,255,0.05)' },
-                    yaxis: { title: "Financial Loss (₹)", color: '#94a3b8', gridcolor: 'rgba(255,255,255,0.05)' },
-                    paper_bgcolor: 'rgba(0,0,0,0)',
-                    plot_bgcolor: 'rgba(0,0,0,0)',
-                    font: { color: '#ffffff', family: 'Inter, sans-serif' },
-                    margin: { t: 40, b: 40, l: 60, r: 20 },
-                    autosize: true
-                  }}
-                  useResizeHandler={true}
-                  style={{width: '100%', height: '350px'}}
-                  config={{ displayModeBar: false }}
-                />
-              </div>
-            </GlassCard>
-          )}
-        </>
-      )}
       <ImageModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} imageSrc={modalImageSrc} />
     </div>
   );

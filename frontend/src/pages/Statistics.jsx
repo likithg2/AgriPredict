@@ -8,6 +8,16 @@ import { Cloud, TrendingUp, Loader, Volume2, LineChart, BarChart2 } from 'lucide
 import ReactMarkdown from 'react-markdown';
 import toast from 'react-hot-toast';
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import Plot from 'react-plotly.js';
+
+const CROP_LIST = ["Tomato", "Onion", "Cucumber", "Potato"];
+const DISTRICT_LIST = [
+  "Bagalkot", "Ballari", "Belagavi", "Bengaluru Rural", "Bengaluru Urban",
+  "Bidar", "Chamarajanagar", "Chikkaballapur", "Chitradurga", "Dakshina Kannada",
+  "Davangere", "Dharwad", "Gadag", "Hassan", "Haveri", "Kalaburagi", "Kodagu",
+  "Kolar", "Koppal", "Mandya", "Mysuru", "Raichur", "Ramanagara", "Shivamogga",
+  "Tumakuru", "Udupi", "Uttara Kannada", "Vijayanagar", "Vijayapura", "Yadgir",
+];
 
 const Statistics = () => {
   const { user } = useContext(AuthContext);
@@ -27,6 +37,11 @@ const Statistics = () => {
   
   // Graph state
   const [selectedCropGraph, setSelectedCropGraph] = useState('Tomato');
+  
+  // Analytics & Filtering state
+  const [cropFilter, setCropFilter] = useState("All");
+  const [districtFilter, setDistrictFilter] = useState("All");
+  const [analytics, setAnalytics] = useState(null);
   
   const marketTrendData = {
     Tomato: [
@@ -50,6 +65,24 @@ const Statistics = () => {
   useEffect(() => {
     fetchSuggestions();
   }, []);
+
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      try {
+        const params = {};
+        if (cropFilter !== "All") params.crop = cropFilter;
+        if (districtFilter !== "All") params.district = districtFilter;
+        
+        const res = await predictionsAPI.getAnalytics(params);
+        setAnalytics(res.data);
+      } catch (err) {
+        console.error("Failed to load analytics", err);
+      }
+    };
+    if (user) {
+       fetchAnalytics();
+    }
+  }, [user, cropFilter, districtFilter]);
 
   const fetchSuggestions = async () => {
     setLoadingSuggestions(true);
@@ -85,6 +118,26 @@ const Statistics = () => {
       setPlayingAudioIdx(null);
     }
   };
+
+  // --- Analytics Charts Data Prep ---
+  let spx = [], spy = [];
+  let pieLabels = [], pieValues = [], pieColors = [];
+  let barLabels = [], barValues = [];
+
+  if (analytics) {
+    const trends = analytics.spoilage_trends || [];
+    spx = trends.map((_, i) => i + 1);
+    spy = trends;
+    
+    const risks = analytics.risk_distribution || {};
+    pieLabels = Object.keys(risks).filter(k => risks[k] > 0);
+    pieValues = pieLabels.map(k => risks[k]);
+    pieColors = pieLabels.map(k => k === 'HIGH' ? '#ef4444' : k === 'MEDIUM' ? '#f97316' : '#22c55e');
+    
+    const loss = analytics.loss_by_crop || {};
+    barLabels = Object.keys(loss);
+    barValues = barLabels.map(k => loss[k]);
+  }
 
   return (
     <div className="space-y-6">
@@ -188,6 +241,144 @@ const Statistics = () => {
         </GlassCard>
 
       </div>
+
+      {/* Analytics Filters */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8 mb-2">
+        <div>
+          <label className="text-sm font-medium text-text-muted mb-1 block flex items-center gap-2">🌱 Filter Analytics by Crop</label>
+          <select value={cropFilter} onChange={(e) => setCropFilter(e.target.value)} className="input-field bg-background/50 dark:bg-black/90 dark:text-white w-full">
+            <option value="All">All Crops</option>
+            {CROP_LIST.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-sm font-medium text-text-muted mb-1 block flex items-center gap-2">📍 Filter Analytics by District</label>
+          <select value={districtFilter} onChange={(e) => setDistrictFilter(e.target.value)} className="input-field bg-background/50 dark:bg-black/90 dark:text-white w-full">
+            <option value="All">All Districts</option>
+            {DISTRICT_LIST.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Analytics Charts */}
+      {analytics && (analytics.spoilage_trends || []).length >= 2 && (
+        <div className="mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <GlassCard className="p-1 flex flex-col justify-center overflow-hidden border border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+              <div className="p-4 pb-0 border-b border-glass-border bg-background/30 rounded-t-xl">
+                 <h3 className="text-lg font-bold text-text-main mb-1">Spoilage Trend Analysis</h3>
+                 <p className="text-xs text-text-muted mb-3">Probability of spoilage across recent prediction records.</p>
+              </div>
+              <div className="bg-black/10">
+                <Plot
+                  data={[{
+                    x: spx,
+                    y: spy,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    marker: { color: '#10b981', size: 6, line: { width: 2, color: '#fff'} },
+                    line: { width: 3, shape: 'spline', color: '#10b981' },
+                    fill: 'tozeroy',
+                    fillcolor: 'rgba(16, 185, 129, 0.1)',
+                    hoverinfo: 'y',
+                    hovertemplate: '%{y:.1f}%<extra></extra>',
+                  }]}
+                  layout={{
+                    xaxis: { title: "Prediction Sequence", color: 'var(--text-muted)', gridcolor: 'rgba(128,128,128,0.15)', zeroline: false },
+                    yaxis: { title: "Spoilage Probability", color: 'var(--text-muted)', gridcolor: 'rgba(128,128,128,0.15)', zeroline: false, ticksuffix: '%' },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: 'rgba(0,0,0,0)',
+                    font: { color: 'var(--text-main)', family: 'Inter, sans-serif' },
+                    margin: { t: 30, b: 50, l: 60, r: 20 },
+                    autosize: true,
+                    hovermode: 'x unified'
+                  }}
+                  useResizeHandler={true}
+                  style={{width: '100%', height: '350px'}}
+                  config={{ displayModeBar: false }}
+                />
+              </div>
+            </GlassCard>
+            
+            <GlassCard className="p-1 flex flex-col justify-center overflow-hidden border border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+              <div className="p-4 pb-0 border-b border-glass-border bg-background/30 rounded-t-xl">
+                 <h3 className="text-lg font-bold text-text-main mb-1">Risk Level Distribution</h3>
+                 <p className="text-xs text-text-muted mb-3">Overall breakdown of HIGH, MEDIUM, and LOW risk shipments.</p>
+              </div>
+              <div className="bg-black/10">
+                <Plot
+                  data={[{
+                    labels: pieLabels,
+                    values: pieValues,
+                    type: 'pie',
+                    hole: 0.5,
+                    textinfo: 'label+percent',
+                    textposition: 'outside',
+                    hoverinfo: 'label+value',
+                    hovertemplate: '%{label}<br>Count: %{value}<extra></extra>',
+                    marker: { 
+                      colors: pieColors,
+                      line: { color: 'rgba(128,128,128,0.1)', width: 2 }
+                    }
+                  }]}
+                  layout={{
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: 'rgba(0,0,0,0)',
+                    font: { color: 'var(--text-main)', family: 'Inter, sans-serif' },
+                    margin: { t: 40, b: 40, l: 40, r: 40 },
+                    autosize: true,
+                    showlegend: false
+                  }}
+                  useResizeHandler={true}
+                  style={{width: '100%', height: '350px'}}
+                  config={{ displayModeBar: false }}
+                />
+              </div>
+            </GlassCard>
+          </div>
+          
+          {barLabels.length > 0 && (
+            <GlassCard className="mt-6 p-1 flex flex-col justify-center overflow-hidden border border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+              <div className="p-4 pb-0 border-b border-glass-border bg-background/30 rounded-t-xl">
+                 <h3 className="text-lg font-bold text-text-main mb-1">Total Financial Exposure by Crop</h3>
+                 <p className="text-xs text-text-muted mb-3">Cumulative estimated financial loss segmented by crop type.</p>
+              </div>
+              <div className="bg-black/10">
+                <Plot
+                  data={[{
+                    x: barLabels,
+                    y: barValues,
+                    type: 'bar',
+                    text: barValues.map(v => '₹' + v.toLocaleString()),
+                    textposition: 'auto',
+                    hoverinfo: 'x+y',
+                    hovertemplate: '%{x}<br>Loss: ₹%{y:,.0f}<extra></extra>',
+                    marker: { 
+                      color: barValues, 
+                      colorscale: 'YlOrRd', 
+                      showscale: false,
+                      line: { width: 1, color: 'rgba(128,128,128,0.2)' }
+                    }
+                  }]}
+                  layout={{
+                    xaxis: { color: 'var(--text-muted)', gridcolor: 'rgba(128,128,128,0.15)' },
+                    yaxis: { title: "Financial Loss (₹)", color: 'var(--text-muted)', gridcolor: 'rgba(128,128,128,0.15)' },
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: 'rgba(0,0,0,0)',
+                    font: { color: 'var(--text-main)', family: 'Inter, sans-serif' },
+                    margin: { t: 40, b: 40, l: 60, r: 20 },
+                    autosize: true
+                  }}
+                  useResizeHandler={true}
+                  style={{width: '100%', height: '350px'}}
+                  config={{ displayModeBar: false }}
+                />
+              </div>
+            </GlassCard>
+          )}
+        </div>
+      )}
+
     </div>
   );
 };

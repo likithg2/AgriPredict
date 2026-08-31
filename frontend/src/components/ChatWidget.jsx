@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, X, Send, Bot, Menu, Plus, Clock } from 'lucide-react';
+import { MessageSquare, X, Send, Bot, Menu, Plus, Clock, Mic, MicOff, Volume2, Loader } from 'lucide-react';
 import { LanguageContext } from '../context/LanguageContext';
-import { aiAPI } from '../utils/api';
+import { aiAPI, predictionsAPI } from '../utils/api';
+import toast from 'react-hot-toast';
 
 const ChatWidget = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -14,6 +15,12 @@ const ChatWidget = () => {
   const [sessions, setSessions] = useState([]);
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  
+  // Voice states
+  const [isListening, setIsListening] = useState(false);
+  const [wasVoiceInput, setWasVoiceInput] = useState(false);
+  const [playingAudioIdx, setPlayingAudioIdx] = useState(null);
+  const recognitionRef = useRef(null);
   
   const messagesEndRef = useRef(null);
   
@@ -62,6 +69,72 @@ const ChatWidget = () => {
     scrollToBottom();
   }, [messages]);
 
+  // STT Init
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        recognitionRef.current = new SpeechRecognition();
+        recognitionRef.current.continuous = false;
+        recognitionRef.current.interimResults = false;
+        
+        recognitionRef.current.onresult = (event) => {
+          const transcript = event.results[0][0].transcript;
+          setInputMessage(transcript);
+          setWasVoiceInput(true);
+        };
+        recognitionRef.current.onerror = (event) => {
+          console.error("Speech recognition error", event.error);
+          setIsListening(false);
+        };
+        recognitionRef.current.onend = () => {
+          setIsListening(false);
+        };
+      }
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    } else {
+      if (!recognitionRef.current) {
+        toast.error("Speech recognition not supported in your browser.");
+        return;
+      }
+      setInputMessage('');
+      setWasVoiceInput(true);
+      recognitionRef.current.start();
+      setIsListening(true);
+    }
+  };
+
+  const playTTS = async (text, idx) => {
+    if (playingAudioIdx !== null) return;
+    setPlayingAudioIdx(idx);
+    try {
+      const langMap = {
+        'en': 'english',
+        'kn': 'kannada',
+        'hi': 'hindi'
+      };
+      const reqLang = langMap[language] || 'english';
+      const res = await predictionsAPI.getAdvisoryAudio({ text, lang: reqLang });
+      const audioUrl = URL.createObjectURL(res.data);
+      const audio = new Audio(audioUrl);
+      
+      audio.onended = () => {
+        setPlayingAudioIdx(null);
+      };
+      audio.play();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to generate audio");
+      setPlayingAudioIdx(null);
+    }
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!inputMessage.trim()) return;
@@ -85,16 +158,25 @@ const ChatWidget = () => {
         fetchSessions(); // Refresh history list
       }
       
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: res.data.response || res.data.reply || res.data.answer || "I'm sorry, I couldn't understand that."
-      }]);
+      const aiResponseText = res.data.response || res.data.reply || res.data.answer || "I'm sorry, I couldn't understand that.";
+      const aiMessage = { role: 'assistant', content: aiResponseText };
+      
+      setMessages(prev => {
+        const newMsgs = [...prev, aiMessage];
+        if (wasVoiceInput) {
+          // Play TTS automatically for the new message index
+          playTTS(aiResponseText, newMsgs.length - 1);
+        }
+        return newMsgs;
+      });
+      setWasVoiceInput(false);
     } catch (err) {
       console.error("Chat error:", err);
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: "Sorry, I am having trouble connecting to the server right now."
       }]);
+      setWasVoiceInput(false);
     } finally {
       setIsLoading(false);
     }
@@ -216,12 +298,22 @@ const ChatWidget = () => {
                       key={idx}
                       className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
-                      <div className={`max-w-[80%] rounded-2xl p-3 ${
+                      <div className={`max-w-[80%] rounded-2xl p-3 relative ${
                         msg.role === 'user' 
                           ? 'bg-primary text-black rounded-br-none' 
-                          : 'bg-white/10 text-white rounded-bl-none'
+                          : 'bg-white/10 text-white rounded-bl-none pr-10'
                       }`}>
                         <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                        {msg.role === 'assistant' && (
+                          <button
+                            onClick={() => playTTS(msg.content, idx)}
+                            disabled={playingAudioIdx !== null}
+                            className="absolute right-2 top-2 p-1.5 rounded-full bg-black/40 text-text-muted hover:text-white transition-colors"
+                            title="Play Audio"
+                          >
+                            {playingAudioIdx === idx ? <Loader className="w-4 h-4 animate-spin" /> : <Volume2 className="w-4 h-4" />}
+                          </button>
+                        )}
                       </div>
                     </motion.div>
                   ))}
@@ -242,17 +334,28 @@ const ChatWidget = () => {
               {/* Input Area */}
               <div className="p-4 bg-black/40 border-t border-white/10">
                 <form onSubmit={handleSendMessage} className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleListening}
+                    className={`p-2.5 rounded-xl transition-colors flex items-center justify-center shrink-0 ${isListening ? 'bg-danger text-white animate-pulse' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                    title="Voice Input"
+                  >
+                    {isListening ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+                  </button>
                   <input
                     type="text"
                     value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
+                    onChange={(e) => {
+                      setInputMessage(e.target.value);
+                      if (wasVoiceInput && e.target.value === '') setWasVoiceInput(false);
+                    }}
                     placeholder="Type a message..."
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-primary transition-colors"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-primary transition-colors min-w-0"
                   />
                   <button
                     type="submit"
                     disabled={!inputMessage.trim() || isLoading}
-                    className="bg-primary hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed text-black p-2.5 rounded-xl transition-colors"
+                    className="bg-primary hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed text-black p-2.5 rounded-xl transition-colors shrink-0"
                   >
                     <Send className="w-5 h-5" />
                   </button>

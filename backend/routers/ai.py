@@ -151,6 +151,11 @@ def chat_with_ai(
             db.commit()
             db.refresh(new_session)
             session_id = new_session.id
+        else:
+            # Security check: verify this session belongs to the user
+            session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id).first()
+            if not session:
+                raise HTTPException(status_code=403, detail="Not authorized to access this session")
             
         # We need to use generate_content with a list of contents for history, 
         # or use start_chat. Let's just pass the messages list.

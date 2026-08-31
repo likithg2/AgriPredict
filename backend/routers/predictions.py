@@ -370,6 +370,41 @@ def list_predictions(
         page_size=page_size,
     )
 
+@router.get("/analytics")
+def get_prediction_analytics(
+    crop: str = Query(None),
+    district: str = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get aggregated prediction analytics for the current user."""
+    query = db.query(Prediction).filter(Prediction.user_id == current_user.id)
+
+    if crop:
+        query = query.filter(Prediction.crop == crop)
+    if district:
+        query = query.filter(Prediction.district == district)
+
+    # Fetch all matching records (ordered by created_at ascending for the trend line)
+    predictions = query.order_by(Prediction.created_at.asc()).all()
+
+    spoilage_trends = [p.spoilage_probability * 100 for p in predictions]
+    
+    risk_distribution = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
+    loss_by_crop = {}
+    
+    for p in predictions:
+        risk = p.risk_level or "LOW"
+        risk_distribution[risk] = risk_distribution.get(risk, 0) + 1
+        loss_by_crop[p.crop] = loss_by_crop.get(p.crop, 0) + p.financial_loss
+
+    return {
+        "spoilage_trends": spoilage_trends,
+        "risk_distribution": risk_distribution,
+        "loss_by_crop": loss_by_crop
+    }
+
+
 
 @router.get("/{prediction_id}", response_model=PredictionResponse)
 def get_prediction(

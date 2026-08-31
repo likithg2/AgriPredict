@@ -79,6 +79,9 @@ def gate_inspection(
         Shipment.booking_id == payload.shipment_booking_id
     ).first()
 
+    warehouse = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+    facility_name = warehouse.facility_name if warehouse else "the facility"
+
     if not shipment:
         raise HTTPException(status_code=404, detail="Shipment not found.")
     if shipment.status != ShipmentStatus.in_transit:
@@ -124,7 +127,7 @@ def gate_inspection(
             type=NotificationType.arrival_alert,
             title=f"Inspection Complete: {shipment.booking_id}",
             message=f"You inspected & stored batch {shipment.booking_id} ({shipment.crop}, "
-                    f"{shipment.tonnage} tons) at {warehouse.facility_name}. Quality: {new_risk}.",
+                    f"{shipment.tonnage} tons) at {facility_name}. Quality: {new_risk}.",
         )
         db.add(mgr_notif)
 
