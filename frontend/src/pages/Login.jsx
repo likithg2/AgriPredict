@@ -249,7 +249,7 @@ const Login = () => {
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium ml-1">Phone</label>
-                <input type="text" value={phone} onChange={e => setPhone(e.target.value)} className="input-field pl-3 bg-primary/10 dark:bg-primary/20" required />
+                <input type="text" value={phone} onChange={e => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))} pattern="[0-9]{10}" title="Phone number must be exactly 10 digits" className="input-field pl-3 bg-primary/10 dark:bg-primary/20" required />
               </div>
             </div>
 
@@ -261,11 +261,12 @@ const Login = () => {
             <div className="space-y-1">
               <label className="text-xs font-medium ml-1">Password</label>
               <div className="relative">
-                <input type={showPassword ? "text" : "password"} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} className="input-field pl-3 pr-10 bg-primary/10 dark:bg-primary/20" required minLength="6" autoComplete="new-password" />
+                <input type={showPassword ? "text" : "password"} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} className="input-field pl-3 pr-10 bg-primary/10 dark:bg-primary/20" required minLength="6" title="Password must be at least 6 characters long" />
                 <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-main" tabIndex="-1">
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
+              <p className="text-[10px] text-text-muted ml-1 mt-0.5">Must be at least 6 characters</p>
             </div>
 
             {role === 'farmer' && (
@@ -329,8 +330,11 @@ const Login = () => {
               {!loading && <ArrowRight size={20} />}
             </Button>
             
-            <div className="text-center pt-2">
-              <button type="button" onClick={() => { setView('register'); clearMessages(); setOtp(''); }} className="text-sm text-text-muted hover:text-primary transition-colors">
+            <div className="flex flex-col gap-2 text-center pt-2 mt-4">
+              <button type="button" onClick={handleRegisterOTPRequest} disabled={isTimerActive || loading} className="text-sm text-primary font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:underline">
+                {isTimerActive ? `Resend OTP in ${formattedTime()}` : 'Resend OTP'}
+              </button>
+              <button type="button" onClick={() => { setView('register'); clearMessages(); setOtp(''); }} className="text-sm text-text-muted hover:text-primary transition-colors mt-2">
                 Back to Registration
               </button>
             </div>

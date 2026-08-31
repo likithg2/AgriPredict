@@ -111,6 +111,7 @@ class FacilityRecommendation(BaseModel):
     available_capacity_tons: float
     mandi_price_per_kg: float
     net_estimated_payout: float
+    base_temp_c: float
     
 class PredictionResponse(BaseModel):
     id: int

@@ -1,10 +1,11 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import { AuthContext } from '../context/AuthContext';
 import GlassCard from '../components/GlassCard';
 import Button from '../components/Button';
 import { farmersAPI, notificationsAPI, authAPI, shipmentsAPI } from '../utils/api';
-import { Package, Trash2, Bell, Edit2, Check, X, Truck, AlertTriangle, Search, Filter } from 'lucide-react';
+import { Package, Trash2, Bell, Edit2, Check, X, Truck, AlertTriangle, Search, Filter, KeyRound, Eye, EyeOff, History } from 'lucide-react';
 import { useResendTimer } from '../hooks/useResendTimer';
 
 const getCropEmoji = (crop) => {
@@ -13,7 +14,7 @@ const getCropEmoji = (crop) => {
 };
 
 const Dashboard = () => {
-  const { user, login, selectedAdminWarehouseId, setAdminWarehouse } = useContext(AuthContext); // we can use login() to update user state if needed, or just reload
+  const { user, login, logout, selectedAdminWarehouseId, setAdminWarehouse } = useContext(AuthContext); // we can use login() to update user state if needed, or just reload
   
   const [dashboardData, setDashboardData] = useState(null);
   const [managerData, setManagerData] = useState(null);
@@ -30,15 +31,16 @@ const Dashboard = () => {
     email: user?.email || '',
   });
   const [updateMsg, setUpdateMsg] = useState({ type: '', text: '' });
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showNotificationHistory, setShowNotificationHistory] = useState(false);
 
   const handleDeleteAccount = async () => {
-    if (window.confirm("Are you sure you want to delete your account? This action cannot be undone and all your data will be lost.")) {
-      try {
-        await authAPI.deleteAccount();
-        logout();
-      } catch (err) {
-        alert("Failed to delete account. Please try again.");
-      }
+    try {
+      await authAPI.deleteAccount();
+      logout();
+      toast.success("Account deleted successfully");
+    } catch (err) {
+      toast.error("Failed to delete account. Please try again.");
     }
   };
 
@@ -53,6 +55,7 @@ const Dashboard = () => {
   // Email OTP States
   const [showEmailOTP, setShowEmailOTP] = useState(false);
   const [emailOTP, setEmailOTP] = useState('');
+  const [showEmailOtpPassword, setShowEmailOtpPassword] = useState(false);
   const { timeLeft, isTimerActive, startTimer, formattedTime } = useResendTimer(120);
 
   // Real-time ticking state
@@ -157,7 +160,7 @@ const Dashboard = () => {
       const res = await authAPI.updateProfile(editForm);
       const token = localStorage.getItem('auth_token');
       login(token, res.data);
-      setUpdateMsg({ type: 'success', text: 'Profile updated successfully!' });
+      toast.success('Profile updated successfully!');
       setIsEditing(false);
     } catch (err) {
       setUpdateMsg({ type: 'error', text: 'Failed to update profile.' });
@@ -308,7 +311,7 @@ const Dashboard = () => {
                 </div>
               )}
               <div className="md:col-span-2 flex justify-between mt-4 border-t border-gray-200 dark:border-gray-800 pt-4">
-                <Button type="button" variant="secondary" onClick={handleDeleteAccount} className="bg-red-50 dark:bg-red-900/20 text-danger hover:bg-red-100 dark:hover:bg-red-900/40 border-red-200 dark:border-red-800" icon={Trash2}>Delete Account</Button>
+                <Button type="button" variant="secondary" onClick={() => setShowDeleteModal(true)} className="bg-red-50 dark:bg-red-900/20 text-danger hover:bg-red-100 dark:hover:bg-red-900/40 border-red-200 dark:border-red-800" icon={Trash2}>Delete Account</Button>
                 <Button type="submit" icon={Check}>Save Changes</Button>
               </div>
             </form>
@@ -317,9 +320,26 @@ const Dashboard = () => {
               <div className="p-4 bg-warning/10 text-warning rounded-lg text-sm mb-4">
                 You are changing your email. An OTP has been sent to <strong>{editForm.email}</strong>.
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Enter 6-Digit OTP</label>
-                <input type="text" className="input-field tracking-widest text-center" maxLength="6" value={emailOTP} onChange={e => setEmailOTP(e.target.value)} required />
+              <div className="space-y-2">
+                <label className="text-sm font-medium ml-1">6-Digit OTP</label>
+                <div className="relative">
+                  {!emailOTP && (
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-text-muted">
+                      <KeyRound size={18} />
+                    </div>
+                  )}
+                  <input 
+                    type={showEmailOtpPassword ? "text" : "password"} 
+                    value={emailOTP}
+                    onChange={(e) => setEmailOTP(e.target.value)}
+                    className={`input-field ${emailOTP ? 'pl-4' : 'pl-10'} pr-10 bg-primary/10 dark:bg-primary/20 tracking-widest`}
+                    maxLength="6"
+                    required
+                  />
+                  <button type="button" onClick={() => setShowEmailOtpPassword(!showEmailOtpPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-main" tabIndex="-1">
+                    {showEmailOtpPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
               <div className="flex gap-4 justify-between items-center">
                 <button type="button" onClick={handleResendEmailOTP} disabled={isTimerActive} className="text-sm text-primary disabled:opacity-50 disabled:cursor-not-allowed font-medium hover:underline">
@@ -496,15 +516,24 @@ const Dashboard = () => {
 
         {/* NOTIFICATIONS & SPOILAGE TRACKER */}
         <div className="space-y-4">
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Bell size={24} className="text-secondary"/> Notifications
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold flex items-center gap-2">
+              <Bell size={24} className="text-secondary"/> Notifications
+            </h2>
+            <button 
+              onClick={() => setShowNotificationHistory(true)}
+              className="p-2 rounded-full hover:bg-white/10 transition-colors text-text-muted hover:text-primary"
+              title="Notification History"
+            >
+              <History size={20} />
+            </button>
+          </div>
           <GlassCard className="p-0 overflow-hidden">
             <div className={`overflow-y-auto ${user?.role === 'farmer' ? 'max-h-[850px]' : 'max-h-[450px]'}`}>
-              {notifications.length > 0 ? (
+              {notifications.filter(n => !n.is_read).length > 0 ? (
                 <div className="divide-y divide-glass-border">
-                  {(user?.role === 'farmer' ? notifications.slice(0, 10) : notifications.slice(0, 5)).map(notif => (
-                    <div key={notif.id} className={`p-4 ${notif.is_read ? 'opacity-60 bg-black/5' : 'bg-primary/5'}`}>
+                  {(user?.role === 'farmer' ? notifications.filter(n => !n.is_read).slice(0, 10) : notifications.filter(n => !n.is_read).slice(0, 5)).map(notif => (
+                    <div key={notif.id} className="p-4 bg-primary/5">
                       <div className="flex justify-between items-start gap-2 mb-1">
                         <h4 className="font-semibold text-sm flex items-center gap-2">
                           {notif.type === 'dispatch_alert' && <AlertTriangle size={14} className="text-warning" />}
@@ -583,6 +612,63 @@ const Dashboard = () => {
           )}
         </div>
       </div>
+
+      {showNotificationHistory && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl max-w-2xl w-full shadow-2xl space-y-4 border border-glass-border flex flex-col max-h-[80vh]">
+            <div className="flex justify-between items-center pb-4 border-b border-glass-border shrink-0">
+              <h3 className="text-xl font-bold flex items-center gap-2 text-gray-900 dark:text-white">
+                <History className="text-primary" /> Notification History
+              </h3>
+              <button onClick={() => setShowNotificationHistory(false)} className="text-text-muted hover:text-danger">
+                <X size={24} />
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 pr-2 space-y-2">
+              {notifications.filter(n => n.is_read).length > 0 ? (
+                notifications.filter(n => n.is_read).map(notif => (
+                  <div key={notif.id} className="p-4 rounded-lg bg-black/5 dark:bg-white/5 border border-glass-border">
+                    <div className="flex justify-between items-start gap-2 mb-1">
+                      <h4 className="font-semibold text-sm flex items-center gap-2 text-gray-900 dark:text-white">
+                        {notif.type === 'dispatch_alert' && <AlertTriangle size={14} className="text-warning" />}
+                        {notif.title}
+                      </h4>
+                      <span className="text-xs text-text-muted/50 whitespace-nowrap">
+                        {new Date(notif.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="text-sm text-text-muted">{notif.message}</p>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center p-8 text-text-muted">
+                  No read notifications history found.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl max-w-md w-full shadow-2xl space-y-6 border border-glass-border">
+            <div className="flex flex-col items-center text-center space-y-2">
+              <div className="w-16 h-16 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center text-danger mb-2">
+                <Trash2 size={32} />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Delete Account?</h3>
+              <p className="text-gray-500 dark:text-gray-400 text-sm">
+                Are you sure you want to permanently delete your account? This action cannot be undone and all your data will be lost.
+              </p>
+            </div>
+            <div className="flex gap-4 w-full">
+              <Button type="button" variant="secondary" className="flex-1 justify-center" onClick={() => setShowDeleteModal(false)}>Cancel</Button>
+              <Button type="button" className="flex-1 justify-center bg-danger hover:bg-red-600 text-white border-0" onClick={handleDeleteAccount}>Yes, Delete</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

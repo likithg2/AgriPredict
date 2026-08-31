@@ -302,17 +302,39 @@ def get_profile(current_user: User = Depends(get_current_user)):
 @router.delete("/me", status_code=status.HTTP_200_OK)
 def delete_account(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Delete the current user's account and all associated data."""
-    # Delete associated data to prevent foreign key constraint failures
-    from backend.models import Prediction, Shipment, Notification
-    db.query(Prediction).filter(Prediction.user_id == current_user.id).delete()
-    db.query(Shipment).filter(Shipment.user_id == current_user.id).delete()
-    db.query(Notification).filter(Notification.user_id == current_user.id).delete()
+    from backend.models import Prediction, Shipment, Notification, ChatSession, ChatMessage, ColdStorage
     
-    # Finally, delete the user
+    # 1. Unassign warehouse if they are a warehouse manager
+    if current_user.role == UserRole.warehouse_manager:
+        managed_warehouses = db.query(ColdStorage).filter(ColdStorage.manager_id == current_user.id).all()
+        for wh in managed_warehouses:
+            wh.manager_id = None
+            
+    # 2. Delete Chat Messages and Sessions
+    session_ids = [s.id for s in db.query(ChatSession.id).filter(ChatSession.user_id == current_user.id).all()]
+    if session_ids:
+        db.query(ChatMessage).filter(ChatMessage.session_id.in_(session_ids)).delete(synchronize_session=False)
+    db.query(ChatSession).filter(ChatSession.user_id == current_user.id).delete(synchronize_session=False)
+    
+    # 3. Delete Notifications related to user's shipments
+    shipment_ids = [s.id for s in db.query(Shipment.id).filter(Shipment.user_id == current_user.id).all()]
+    if shipment_ids:
+        db.query(Notification).filter(Notification.shipment_id.in_(shipment_ids)).delete(synchronize_session=False)
+        
+    # 4. Delete Notifications for the user
+    db.query(Notification).filter(Notification.user_id == current_user.id).delete(synchronize_session=False)
+    
+    # 5. Delete Shipments
+    db.query(Shipment).filter(Shipment.user_id == current_user.id).delete(synchronize_session=False)
+    
+    # 6. Delete Predictions
+    db.query(Prediction).filter(Prediction.user_id == current_user.id).delete(synchronize_session=False)
+    
+    # 7. Finally, delete the user
     db.delete(current_user)
     db.commit()
+    
     return {"message": "Account successfully deleted."}
-
 
 @router.put("/me", response_model=UserResponse)
 def update_profile(
@@ -331,35 +353,3 @@ def update_profile(
     db.commit()
     db.refresh(current_user)
     return UserResponse.model_validate(current_user)
-
-
-@router.delete("/account", status_code=status.HTTP_200_OK)
-def delete_account(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Delete the current user account and all associated data."""
-    # 1. Unassign warehouse if they are a warehouse manager
-    if current_user.role == UserRole.warehouse_manager:
-        from backend.models import ColdStorage
-        managed_warehouses = db.query(ColdStorage).filter(ColdStorage.manager_id == current_user.id).all()
-        for wh in managed_warehouses:
-            wh.manager_id = None
-    
-    # 2. Delete Notifications
-    from backend.models import Notification
-    db.query(Notification).filter(Notification.user_id == current_user.id).delete()
-    
-    # 3. Delete Shipments
-    from backend.models import Shipment
-    db.query(Shipment).filter(Shipment.user_id == current_user.id).delete()
-    
-    # 4. Delete Predictions
-    from backend.models import Prediction
-    db.query(Prediction).filter(Prediction.user_id == current_user.id).delete()
-    
-    # 5. Delete User
-    db.delete(current_user)
-    db.commit()
-    
-    return {"message": "Account deleted successfully."}

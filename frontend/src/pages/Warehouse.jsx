@@ -5,6 +5,7 @@ import { shipmentsAPI, warehousesAPI } from '../utils/api';
 import GlassCard from '../components/GlassCard';
 import Button from '../components/Button';
 import { Package, Truck, ShieldAlert, AlertTriangle, Settings, CheckCircle, Save, Calendar, Search, Clock } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 const Warehouse = () => {
   const { user, selectedAdminWarehouseId, setAdminWarehouse } = useContext(AuthContext);
@@ -38,6 +39,9 @@ const Warehouse = () => {
   const [marketShipmentsPage, setMarketShipmentsPage] = useState(1);
   const [crossConnectPage, setCrossConnectPage] = useState(1);
   const [crossConnectSearch, setCrossConnectSearch] = useState('');
+  const [dispatchConfirm, setDispatchConfirm] = useState({ show: false, shipmentId: null, action: null });
+  const [inspectConfirm, setInspectConfirm] = useState(false);
+  const [configConfirm, setConfigConfirm] = useState(false);
 
   useEffect(() => {
     if (user && (user.role === 'warehouse_manager' || user.role === 'admin')) {
@@ -108,7 +112,12 @@ const Warehouse = () => {
   }
 
   // Action Handlers
-  const handleConfigSave = async () => {
+  const promptConfigSave = () => {
+    setConfigConfirm(true);
+  };
+
+  const confirmConfigSave = async () => {
+    setConfigConfirm(false);
     try {
       await warehousesAPI.update(warehouse.id, {
         occupancy_pct: parseFloat(capacityConfig.occupancy_pct),
@@ -116,10 +125,10 @@ const Warehouse = () => {
         capacity_mt: parseInt(capacityConfig.capacity_mt),
         base_temp_c: simulateFault ? 14.5 : 4.0
       });
-      alert(`Successfully updated metrics for ${warehouse.facility_name}`);
+      toast.success(`Successfully updated metrics for ${warehouse.facility_name}`);
     } catch (e) {
       console.error(e);
-      alert("Failed to save configuration");
+      toast.error("Failed to save configuration");
     }
   };
 
@@ -135,8 +144,13 @@ const Warehouse = () => {
     }
   };
 
-  const handleInspect = async () => {
-    if (!inspectVid) return alert("Select a vehicle to inspect.");
+  const promptInspect = () => {
+    if (!inspectVid) return toast.error("Select a vehicle to inspect.");
+    setInspectConfirm(true);
+  };
+
+  const confirmInspect = async () => {
+    setInspectConfirm(false);
     try {
       await warehousesAPI.inspectShipment(warehouse.id, {
         shipment_booking_id: inspectVid,
@@ -144,25 +158,31 @@ const Warehouse = () => {
         ripeness: inspectRipeness,
         core_temp: parseFloat(inspectTemp)
       });
-      alert(`Inspection logged. Vehicle ${inspectVid} docked successfully.`);
-      // reload
+      toast.success(`Inspection logged. Vehicle ${inspectVid} docked successfully.`);
+      setInspectVid('');
       const shipRes = await shipmentsAPI.list();
       setAllShipments(shipRes.data.filter(s => s.destination === warehouse.facility_name));
     } catch (e) {
       console.error(e);
-      alert("Failed to log inspection.");
+      toast.error("Failed to log inspection.");
     }
   };
 
-  const handleDispatch = async (shipmentId, action) => {
+  const promptDispatch = (shipmentId, action) => {
+    setDispatchConfirm({ show: true, shipmentId, action });
+  };
+
+  const confirmDispatch = async () => {
+    const { shipmentId, action } = dispatchConfirm;
+    setDispatchConfirm({ show: false, shipmentId: null, action: null });
     try {
       await warehousesAPI.dispatchShipment(warehouse.id, shipmentId, action);
-      alert(`Dispatch triggered: ${action}`);
+      toast.success(`Dispatch triggered: ${action}`);
       const shipRes = await shipmentsAPI.list();
       setAllShipments(shipRes.data.filter(s => s.destination === warehouse.facility_name));
     } catch(e) {
       console.error(e);
-      alert("Failed to dispatch shipment.");
+      toast.error("Failed to dispatch shipment.");
     }
   };
 
@@ -234,6 +254,12 @@ const Warehouse = () => {
                 <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${simulateFault ? 'left-7' : 'left-1'}`}></div>
               </button>
             </div>
+            <div className="mt-3 flex items-center justify-between px-2">
+              <span className="text-sm font-medium text-text-muted">Freezer Status:</span>
+              <span className={`px-3 py-1 rounded-md text-xs font-bold uppercase ${simulateFault ? 'bg-danger/20 text-danger border border-danger/30' : 'bg-green-500/20 text-green-500 border border-green-500/30'}`}>
+                {simulateFault ? 'Malfunctioned' : 'Normal'}
+              </span>
+            </div>
             <p className="text-xs text-text-muted mt-3">Simulates a localized HVAC compressor trip, spiking internal storage temps.</p>
           </GlassCard>
           
@@ -301,7 +327,7 @@ const Warehouse = () => {
                 </div>
               )}
               
-              <Button onClick={handleConfigSave} className="w-full justify-center" icon={Save}>
+              <Button onClick={promptConfigSave} className="w-full justify-center" icon={Save}>
                 COMMIT WAREHOUSE MATRIX TO DATABASE
               </Button>
             </div>
@@ -490,7 +516,7 @@ const Warehouse = () => {
                   </div>
                 </div>
 
-                <Button onClick={handleInspect} className="w-full justify-center" disabled={!inspectVid}>
+                <Button onClick={promptInspect} className="w-full justify-center">
                   ✅ Log Inspection & Accept to Vault
                 </Button>
               </div>
@@ -549,7 +575,7 @@ const Warehouse = () => {
                           <div className="text-xs text-danger font-bold bg-danger/10 p-2 rounded">
                             🚨 URGENT: Auto-routing to {factoryMatch} to prevent total loss.
                           </div>
-                          <Button onClick={() => handleDispatch(s.id, 'factory')} variant="primary" className="w-full justify-center !bg-danger hover:!bg-danger/80">
+                          <Button onClick={() => promptDispatch(s.id, 'factory')} variant="primary" className="w-full justify-center !bg-danger hover:!bg-danger/80">
                             ✉️ Alert & Dispatch
                           </Button>
                         </div>
@@ -561,7 +587,7 @@ const Warehouse = () => {
                         <div className="text-xs text-warning font-bold bg-warning/10 p-2 rounded">
                           ⚠️ Batch is degrading. Consider accelerated listing.
                         </div>
-                        <Button onClick={() => handleDispatch(s.id, 'accelerated')} variant="primary" className="w-full justify-center !bg-warning hover:!bg-warning/80 !text-black">
+                        <Button onClick={() => promptDispatch(s.id, 'accelerated')} variant="primary" className="w-full justify-center !bg-warning hover:!bg-warning/80 !text-black">
                           ⚡ Accelerated List
                         </Button>
                       </div>
@@ -572,7 +598,7 @@ const Warehouse = () => {
                         <div className="text-xs text-success font-bold bg-success/10 p-2 rounded">
                           ✅ Batch is stable and safely stored.
                         </div>
-                        <Button onClick={() => handleDispatch(s.id, 'mandi')} variant="primary" className="w-full justify-center !bg-success hover:!bg-success/80 text-white">
+                        <Button onClick={() => promptDispatch(s.id, 'mandi')} variant="primary" className="w-full justify-center !bg-success hover:!bg-success/80 text-white">
                           🛒 Standard List
                         </Button>
                       </div>
@@ -583,7 +609,7 @@ const Warehouse = () => {
                     )}
 
                     {s.status === 'Awaiting Buyer Pickup Confirmation' && (
-                      <Button onClick={() => handleDispatch(s.id, 'redirected')} className="w-full justify-center" variant="secondary">
+                      <Button onClick={() => promptDispatch(s.id, 'redirected')} className="w-full justify-center" variant="secondary">
                         ✅ Force Release
                       </Button>
                     )}
@@ -682,6 +708,67 @@ const Warehouse = () => {
             </GlassCard>
           </div>
         </>
+      )}
+
+      {/* MODALS */}
+      {dispatchConfirm.show && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl max-w-md w-full shadow-2xl space-y-6 border border-glass-border">
+            <div className="flex flex-col items-center text-center space-y-2">
+              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-2">
+                <Truck size={32} />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Confirm Dispatch</h3>
+              <p className="text-gray-500 dark:text-gray-400 text-sm">
+                Are you sure you want to proceed with this action? This will update the shipment status and alert the necessary parties.
+              </p>
+            </div>
+            <div className="flex gap-4 w-full">
+              <Button type="button" variant="secondary" className="flex-1 justify-center" onClick={() => setDispatchConfirm({ show: false, shipmentId: null, action: null })}>Cancel</Button>
+              <Button type="button" className="flex-1 justify-center bg-primary text-white border-0" onClick={confirmDispatch}>Yes, Proceed</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {inspectConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl max-w-md w-full shadow-2xl space-y-6 border border-glass-border">
+            <div className="flex flex-col items-center text-center space-y-2">
+              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-2">
+                <CheckCircle size={32} />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Confirm Inspection</h3>
+              <p className="text-gray-500 dark:text-gray-400 text-sm">
+                Are you sure you want to log this inspection? This will accept the shipment into the vault inventory.
+              </p>
+            </div>
+            <div className="flex gap-4 w-full">
+              <Button type="button" variant="secondary" className="flex-1 justify-center" onClick={() => setInspectConfirm(false)}>Cancel</Button>
+              <Button type="button" className="flex-1 justify-center bg-primary text-white border-0" onClick={confirmInspect}>Yes, Log It</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {configConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl max-w-md w-full shadow-2xl space-y-6 border border-glass-border">
+            <div className="flex flex-col items-center text-center space-y-2">
+              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-2">
+                <Save size={32} />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Confirm Configuration</h3>
+              <p className="text-gray-500 dark:text-gray-400 text-sm">
+                Are you sure you want to commit the warehouse matrix settings to the database?
+              </p>
+            </div>
+            <div className="flex gap-4 w-full">
+              <Button type="button" variant="secondary" className="flex-1 justify-center" onClick={() => setConfigConfirm(false)}>Cancel</Button>
+              <Button type="button" className="flex-1 justify-center bg-primary text-white border-0" onClick={confirmConfigSave}>Yes, Commit</Button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

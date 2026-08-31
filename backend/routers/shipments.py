@@ -27,6 +27,12 @@ def create_shipment(
     existing = db.query(Shipment).filter(Shipment.booking_id == payload.booking_id).first()
     if existing:
         raise HTTPException(status_code=400, detail="Booking ID already exists.")
+        
+    # Check for duplicate booking for this prediction
+    if payload.prediction_id is not None:
+        existing_prediction_booking = db.query(Shipment).filter(Shipment.prediction_id == payload.prediction_id).first()
+        if existing_prediction_booking:
+            raise HTTPException(status_code=400, detail="A booking has already been made for this prediction.")
 
     try:
         shipment = Shipment(

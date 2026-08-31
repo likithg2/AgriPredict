@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Plot from 'react-plotly.js';
 import { toast } from 'react-hot-toast';
 
-import { Camera, Mic, Map as MapIcon, Volume2, Truck, Leaf, Loader, RotateCcw } from 'lucide-react';
+import { Camera, Mic, Map as MapIcon, Volume2, Truck, Leaf, Loader, RotateCcw, CheckCircle, Check } from 'lucide-react';
 import Button from '../components/Button';
 import GlassCard from '../components/GlassCard';
 import { AuthContext } from '../context/AuthContext';
@@ -119,6 +119,7 @@ const Prediction = () => {
       setSelectedFacilityIdx(0);
       setBookingMode('random');
       setVehicleReg('');
+      setBookingDetails(null);
       // Auto-scroll to output
       setTimeout(() => {
         outputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -131,10 +132,14 @@ const Prediction = () => {
   const [selectedFacilityIdx, setSelectedFacilityIdx] = useState(0);
   const [bookingMode, setBookingMode] = useState('random');
   const [vehicleReg, setVehicleReg] = useState('');
+  const [bookingDetails, setBookingDetails] = useState(null);
+  const [showBookingConfirm, setShowBookingConfirm] = useState(false);
+  const [bookingTarget, setBookingTarget] = useState('');
   const [selectedWarehouseId, setSelectedWarehouseId] = useState(null);
 
   useEffect(() => {
     setIsBooking(false);
+    setShowBookingConfirm(false);
   }, [selectedFacilityIdx, bookingMode]);
 
 
@@ -325,11 +330,11 @@ const Prediction = () => {
       
       const payload = {
         ...formData,
-        temperature: parseFloat(formData.temperature),
-        humidity: parseFloat(formData.humidity),
-        actual_transit_days: parseFloat(formData.actual_transit_days),
-        expected_transit_days: parseFloat(formData.expected_transit_days),
-        storage_days: storageDays,
+        temperature: parseFloat(formData.temperature) || 25.0,
+        humidity: parseFloat(formData.humidity) || 60.0,
+        actual_transit_days: parseFloat(formData.actual_transit_days) || 1.0,
+        expected_transit_days: parseFloat(formData.expected_transit_days) || 1.0,
+        storage_days: isNaN(storageDays) ? 0 : storageDays,
         quantity_tons: parseFloat(formData.quantity_tons),
         picture_spoilage_prob: prob,
         image_data: base64Image
@@ -344,9 +349,14 @@ const Prediction = () => {
       fetchAdvisoryAudio(data.advisory_transcript_en, 'en');
       
     } catch (err) {
-      const errorMsg = err.response?.data?.detail || err.message;
-      setError(errorMsg);
-      setLoading(false);
+      let errorMsg = err.response?.data?.detail || err.message;
+      if (Array.isArray(errorMsg)) {
+        errorMsg = errorMsg.map(e => `${e.loc?.join('.') || 'Field'}: ${e.msg}`).join(', ');
+      } else if (typeof errorMsg === 'object') {
+        errorMsg = JSON.stringify(errorMsg);
+      }
+      setError(String(errorMsg));
+      toast.error("Prediction Failed");
     } finally {
       setLoading(false);
     }
@@ -608,12 +618,8 @@ const Prediction = () => {
                   <input type="number" step="0.1" name="quantity_tons" value={formData.quantity_tons} onChange={handleChange} className="input-field bg-primary/5 w-full" required />
                 </div>
                 <div>
-                  <label className="text-xs text-text-muted font-medium mb-1 block">Road Infrastructure</label>
-                  <select  name="road_condition" value={formData.road_condition} onChange={handleChange} className="input-field bg-primary/5 w-full dark:bg-black/90 dark:text-white">
-                    <option value="National Highway">National Highway</option>
-                    <option value="State Highway">State Highway</option>
-                    <option value="Rural / Unpaved Road">Rural / Unpaved Road</option>
-                  </select>
+                  <label className="text-xs text-text-muted font-medium mb-1 block">Harvest Date</label>
+                  <input type="date" name="harvest_date" value={formData.harvest_date} onChange={handleChange} max={new Date().toISOString().split('T')[0]} className="input-field bg-primary/5 w-full" />
                 </div>
                 <div>
                   <label className="text-xs text-text-muted font-medium mb-1 block">Temp (°C)</label>
@@ -623,11 +629,7 @@ const Prediction = () => {
                   <label className="text-xs text-text-muted font-medium mb-1 block">Humidity (%)</label>
                   <input type="number" step="0.1" name="humidity" value={formData.humidity} onChange={handleChange} className="input-field bg-primary/5 w-full" />
                 </div>
-                <div>
-                  <label className="text-xs text-text-muted font-medium mb-1 block">Harvest Date</label>
-                  <input type="date" name="harvest_date" value={formData.harvest_date} onChange={handleChange} max={new Date().toISOString().split('T')[0]} className="input-field bg-primary/5 w-full" />
-                </div>
-                <div>
+                <div className="col-span-2">
                   <label className="text-xs text-text-muted font-medium mb-1 block">Picture Spoilage Prob</label>
                   <input type="text" disabled value={imageAnalysis ? imageAnalysis.rotten_pct.toFixed(1) + '%' : 'Not Analyzed'} className="input-field bg-primary/5 w-full opacity-70" />
                 </div>
@@ -824,6 +826,12 @@ const Prediction = () => {
                                   {fac.capacity_mt.toFixed(1)} T
                                 </span>
                               </div>
+                              <div className="col-span-2 md:col-span-3">
+                                <span className="text-text-muted block">Freezer Condition</span>
+                                <span className={`font-bold ${fac.base_temp_c > 4.0 ? 'text-red-500' : 'text-green-500'}`}>
+                                  {fac.base_temp_c > 4.0 ? '🚨 Critical / Not Working' : '✅ Normal'}
+                                </span>
+                              </div>
                             </div>
                             
                             {isFull ? (
@@ -833,107 +841,154 @@ const Prediction = () => {
                             ) : (
                               <>
                                 <div className="border-t border-white/10 pt-4">
-                                  <div className="flex gap-2 mb-4">
-                                    <button 
-                                      onClick={() => {
-                                        setBookingMode('random');
-                                        setVehicleReg('');
-                                      }}
-                                      className={`flex-1 py-2 text-sm font-semibold rounded-lg border transition-colors ${bookingMode === 'random' ? 'bg-primary text-white border-primary' : 'bg-transparent text-text-muted border-white/20 hover:bg-white/5'}`}
-                                    >
-                                      Random Vehicle
-                                    </button>
-                                    <button 
-                                      onClick={() => {
-                                        setBookingMode('manual');
-                                        setVehicleReg('');
-                                      }}
-                                      className={`flex-1 py-2 text-sm font-semibold rounded-lg border transition-colors ${bookingMode === 'manual' ? 'bg-primary text-white border-primary' : 'bg-transparent text-text-muted border-white/20 hover:bg-white/5'}`}
-                                    >
-                                      Manual Input
-                                    </button>
-                                  </div>
+                                  {bookingDetails ? (
+                                    <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-xl text-center shadow-lg">
+                                      <div className="text-green-700 dark:text-green-400 font-bold text-lg mb-1 flex items-center justify-center gap-2">
+                                        <Check size={20} /> Booking Confirmed
+                                      </div>
+                                      <div className="text-sm text-text-muted mb-3">at {bookingDetails.facilityName}</div>
+                                      <div className="text-gray-900 dark:text-white bg-white/50 dark:bg-black/30 py-2 rounded-lg border border-glass-border">
+                                        <span className="text-xs text-text-muted block mb-1 uppercase tracking-wider">Vehicle Assigned</span>
+                                        <span className="text-primary font-mono font-bold text-lg">{bookingDetails.vehicleReg.toUpperCase()}</span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <div className="flex flex-col gap-2 mb-4">
+                                        <button 
+                                          onClick={() => {
+                                            setBookingMode('random');
+                                            setVehicleReg('');
+                                          }}
+                                          className={`w-full py-2 px-4 text-sm font-semibold rounded-lg border transition-colors ${bookingMode === 'random' ? 'bg-primary text-white border-primary' : 'bg-transparent text-text-muted border-white/20 hover:bg-white/5'}`}
+                                        >
+                                          Book Vehicle and Slot
+                                        </button>
+                                        <button 
+                                          onClick={() => {
+                                            setBookingMode('manual');
+                                            setVehicleReg('');
+                                          }}
+                                          className={`w-full py-2 px-4 text-sm font-semibold rounded-lg border transition-colors ${bookingMode === 'manual' ? 'bg-primary text-white border-primary' : 'bg-transparent text-text-muted border-white/20 hover:bg-white/5'}`}
+                                        >
+                                          If you have a vehicle, book a slot
+                                        </button>
+                                      </div>
                                   
                                   {bookingMode === 'manual' && (
                                     <div className="mb-4">
                                       <label className="text-xs text-text-muted block mb-1">Vehicle Registration Number</label>
                                       <input 
                                         type="text" 
-                                        placeholder="e.g. KA-01-AB-1234" 
+                                        placeholder="e.g. KA01AB1234" 
                                         value={vehicleReg}
-                                        onChange={(e) => setVehicleReg(e.target.value.toUpperCase())}
+                                        maxLength={10}
+                                        onChange={(e) => setVehicleReg(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10))}
                                         className="input-field bg-primary/5 w-full uppercase"
                                       />
                                     </div>
                                   )}
                                   
-                                  <Button 
-                                    disabled={isBooking}
-                                    onClick={async () => {
-                                        let finalReg = vehicleReg.trim();
-                                        if (bookingMode === 'manual' && !finalReg) {
-                                            toast.error("Please enter a vehicle registration number");
-                                            return;
-                                        }
-                                        if (bookingMode === 'random') {
-                                            const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-                                            const r1 = letters[Math.floor(Math.random() * 26)];
-                                            const r2 = letters[Math.floor(Math.random() * 26)];
-                                            const rNums = Math.floor(1000 + Math.random() * 9000);
-                                            finalReg = `KA-01-${r1}${r2}-${rNums}`;
-                                            setVehicleReg(finalReg);
-                                        }
-                                        
-                                        const token = localStorage.getItem('auth_token');
-                                        if (!token) {
-                                            toast.error("You must be logged in to book.");
-                                            return;
-                                        }
-
-                                        try {
-                                            setIsBooking(true);
-                                            const res = await fetch("http://localhost:8000/api/shipments/", {
-                                                method: "POST",
-                                                headers: {
-                                                    "Content-Type": "application/json",
-                                                    "Authorization": `Bearer ${token}`
-                                                },
-                                                body: JSON.stringify({
-                                                    prediction_id: predictionResult.id,
-                                                    booking_id: `BK-${Date.now().toString().slice(-6)}`,
-                                                    crop: predictionResult.crop,
-                                                    tonnage: predictionResult.quantity_tons,
-                                                    destination: fac.facility_name,
-                                                    route_quality: predictionResult.road_condition,
-                                                    eta_hours: (fac.physical_distance_km / 40).toFixed(1) + " hours",
-                                                    risk_status: predictionResult.risk_level,
-                                                    shelf_days_calculated: predictionResult.shelf_life_days,
-                                                    vehicle_reg_number: finalReg
-                                                })
-                                            });
-
-                                            if (!res.ok) {
-                                                const err = await res.json();
-                                                throw new Error(err.detail || "Booking failed");
-                                            }
-
-                                            toast.success(`Slot successfully booked! Assigned Vehicle: ${finalReg}`);
-                                        } catch (error) {
-                                            console.error("Booking error:", error);
-                                            toast.error(error.message || "Failed to book shipment.");
-                                            setIsBooking(false);
-                                        }
-                                    }}
-                                    className="w-full bg-primary hover:bg-primary-hover py-3 shadow-lg shadow-primary/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                                  >
-                                    {isBooking ? t("Slot Booked ✓") : t("Confirm Booking")}
-                                  </Button>
-                                  
-                                  {isBooking && (
-                                    <div className="mt-3 p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-green-400 text-center font-semibold text-sm">
-                                      ✅ Booking Confirmed at {fac.facility_name}
-                                      <div className="text-white mt-1">Vehicle Assigned: <span className="text-primary font-bold">{bookingMode === 'random' ? vehicleReg : vehicleReg.toUpperCase()}</span></div>
+                                  {showBookingConfirm ? (
+                                    <div className="p-4 bg-orange-500/10 border border-orange-500/30 rounded-xl">
+                                      <p className="text-sm text-orange-700 dark:text-orange-400 font-semibold mb-3">Are you sure you want to book a slot at this facility?</p>
+                                      <div className="flex gap-3">
+                                        <Button 
+                                          variant="outline" 
+                                          className="flex-1 py-2 text-sm border-orange-500/50 text-orange-700 dark:text-orange-400 hover:bg-orange-500/10"
+                                          onClick={() => setShowBookingConfirm(false)}
+                                        >
+                                          Cancel
+                                        </Button>
+                                        <Button 
+                                          type="button"
+                                          className="flex-1 py-2 text-sm bg-orange-600 hover:bg-orange-700 text-white border-0"
+                                          onClick={async () => {
+                                              setShowBookingConfirm(false);
+                                              const token = localStorage.getItem('auth_token');
+                                              if (!token) {
+                                                  toast.error("You must be logged in to book.");
+                                                  return;
+                                              }
+                                              try {
+                                                  setIsBooking(true);
+                                                  const res = await fetch("http://localhost:8000/api/shipments/", {
+                                                      method: "POST",
+                                                      headers: {
+                                                          "Content-Type": "application/json",
+                                                          "Authorization": `Bearer ${token}`
+                                                      },
+                                                      body: JSON.stringify({
+                                                          prediction_id: predictionResult.id,
+                                                          booking_id: `BK-${Date.now().toString().slice(-6)}`,
+                                                          crop: predictionResult.crop,
+                                                          tonnage: predictionResult.quantity_tons,
+                                                          destination: fac.facility_name,
+                                                          route_quality: predictionResult.road_condition,
+                                                          eta_hours: (fac.physical_distance_km / 40).toFixed(1) + " hours",
+                                                          risk_status: predictionResult.risk_level,
+                                                          shelf_days_calculated: predictionResult.shelf_life_days,
+                                                          vehicle_reg_number: bookingTarget
+                                                      })
+                                                  });
+      
+                                                  if (!res.ok) {
+                                                      const err = await res.json();
+                                                      throw new Error(err.detail || "Booking failed");
+                                                  }
+      
+                                                  toast.success(`Slot successfully booked! Assigned Vehicle: ${bookingTarget}`);
+                                                  setBookingDetails({
+                                                      facilityName: fac.facility_name,
+                                                      vehicleReg: bookingTarget
+                                                  });
+                                                  setIsBooking(false);
+                                              } catch (error) {
+                                                  console.error("Booking error:", error);
+                                                  toast.error(error.message || "Failed to book shipment.");
+                                                  setIsBooking(false);
+                                              }
+                                          }}
+                                        >
+                                          {isBooking ? t("Processing...") : "Yes, Confirm"}
+                                        </Button>
+                                      </div>
                                     </div>
+                                  ) : (
+                                    <Button 
+                                      type="button"
+                                      disabled={isBooking}
+                                      onClick={() => {
+                                          let finalReg = vehicleReg.trim();
+                                          if (bookingMode === 'manual') {
+                                              if (!finalReg) {
+                                                  toast.error("Please enter a vehicle registration number");
+                                                  return;
+                                              }
+                                              const regRegex = /^KA\d{2}[A-Z]{2}\d{4}$/;
+                                              if (!regRegex.test(finalReg)) {
+                                                  toast.error("Format must be KA00XX0000 (e.g. KA01AB1234)");
+                                                  return;
+                                              }
+                                          }
+                                          if (bookingMode === 'random') {
+                                              const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+                                              const prefixNums = Math.floor(10 + Math.random() * 90).toString().padStart(2, '0');
+                                              const r1 = letters[Math.floor(Math.random() * 26)];
+                                              const r2 = letters[Math.floor(Math.random() * 26)];
+                                              const rNums = Math.floor(1000 + Math.random() * 9000).toString().padStart(4, '0');
+                                              finalReg = `KA${prefixNums}${r1}${r2}${rNums}`;
+                                              setVehicleReg(finalReg);
+                                          }
+                                          setBookingTarget(finalReg);
+                                          setShowBookingConfirm(true);
+                                      }}
+                                      className="w-full bg-primary hover:bg-primary-hover py-3 shadow-lg shadow-primary/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      {t("Confirm Booking")}
+                                    </Button>
+                                  )}
+                                  </>
                                   )}
                                 </div>
                               </>

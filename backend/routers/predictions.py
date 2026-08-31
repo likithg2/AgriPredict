@@ -139,6 +139,7 @@ def _get_top_3_facilities(f_lat: float, f_lng: float, db: Session, crop: str, qt
                 "mandi_price_per_kg": mandi_price,
                 "price_per_ton_day": s.price_per_ton_day,
                 "net_estimated_payout": net_payout,
+                "base_temp_c": s.base_temp_c,
             })
 
     # Sort by physical distance ascending, then net payout descending

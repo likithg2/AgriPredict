@@ -79,7 +79,7 @@ def gate_inspection(
         Shipment.booking_id == payload.shipment_booking_id
     ).first()
 
-    warehouse = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+    warehouse = db.query(ColdStorage).filter(ColdStorage.id == warehouse_id).first()
     facility_name = warehouse.facility_name if warehouse else "the facility"
 
     if not shipment:
